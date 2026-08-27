@@ -1,0 +1,94 @@
+<!DOCTYPE html><html><body><div id="results"></div><div id="c_sfoto.svg"><svg id="svg_sfoto.svg" data-filename="sfoto.svg" xmlns="http://www.w3.org/2000/svg" height="48px" viewBox="0 -960 960 960" width="48px">
+  <defs>
+    <!-- Gradiente moderno para a câmera (Indigo -> Azul -> Ciano) -->
+    <linearGradient id="cameraGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366F1"/>
+      <stop offset="50%" stop-color="#3B82F6"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+
+    <!-- Gradiente em tons de vermelho moderno para o pin (Carmim -> Laranja avermelhado) -->
+    <linearGradient id="pinGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF416C"/>
+      <stop offset="100%" stop-color="#FF4B2B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Corpo da Câmera preenchido com gradiente, mantendo apenas o círculo do centro vazio -->
+  <path fill="url(#cameraGradient)" fill-rule="evenodd" d="M140-120q-24 0-42-18t-18-42v-513q0-23 18-41.5t42-18.5h147l73-87h240l73 87h147q23 0 41.5 18.5T880-693v513q0 24-18.5 42T820-120H140ZM479.5-267q72.5 0 121.5-49t49-121.5q0-72.5-49-121T479.5-607q-72.5 0-121 48.5t-48.5 121q0 72.5 48.5 121.5t121 49Z"/>
+
+  <!-- Pin de Localização Alinhado Horizontalmente e Deslocado para Cima (Apontando para a Lente) -->
+  <g transform="translate(307, -440) scale(0.36)" fill="url(#pinGradient)">
+    <path d="M480-80Q319-217 239.5-334.5T160-552q0-150 96.5-239T480-880q127 0 223.5 89T800-552q0 100-79.5 217.5T480-80Z"/>
+  </g>
+</svg>
+</div><div id="c_sgeoconversor.svg"><svg id="svg_sgeoconversor.svg" data-filename="sgeoconversor.svg" xmlns="http://www.w3.org/2000/svg" height="48px" viewBox="0 -960 960 960" width="48px">
+  <defs>
+    <!-- Gradiente moderno do sFoto para as setas (Indigo -> Azul -> Ciano) -->
+    <linearGradient id="conversorGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366F1"/>
+      <stop offset="50%" stop-color="#3B82F6"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+
+    <!-- Gradiente Verde -> Amarelo Claro para o texto UTM (Invertido) -->
+    <linearGradient id="yellowGreenGradientUtm" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#4ADE80"/>
+      <stop offset="100%" stop-color="#FACC15"/>
+    </linearGradient>
+
+    <!-- Gradiente Amarelo Claro -> Verde para o texto GEO -->
+    <linearGradient id="yellowGreenGradientGeo" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FACC15"/>
+      <stop offset="100%" stop-color="#4ADE80"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Seta Superior (Apontando para a esquerda) -->
+  <path fill="url(#conversorGradient)" d="M643-414 450-607l193-193 42 42-121 121h316v60H564l121 121-42 42Z"/>
+
+  <!-- Seta Inferior (Apontando para a direita) -->
+  <path fill="url(#conversorGradient)" d="m317-160-42-42 121-121H80v-60h316L275-504l42-42 193 193-193 193Z"/>
+
+  <!-- Texto UTM (Gradiente Verde -> Amarelo) -->
+  <text x="240" y="-620" fill="url(#yellowGreenGradientUtm)" font-family="'Roboto', 'Segoe UI', Arial, sans-serif" font-weight="900" font-size="160" text-anchor="middle">UTM</text>
+
+  <!-- Texto GEO (Gradiente Amarelo -> Verde) -->
+  <text x="720" y="-210" fill="url(#yellowGreenGradientGeo)" font-family="'Roboto', 'Segoe UI', Arial, sans-serif" font-weight="900" font-size="160" text-anchor="middle">GEO</text>
+</svg>
+</div><div id="c_sgis.svg"><svg id="svg_sgis.svg" data-filename="sgis.svg" xmlns="http://www.w3.org/2000/svg" height="48px" viewBox="0 -960 960 960" width="48px">
+  <defs>
+    <!-- Gradiente moderno do sHub para o mapa (Indigo -> Azul -> Ciano) -->
+    <linearGradient id="mapaGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366F1"/>
+      <stop offset="50%" stop-color="#3B82F6"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+
+    <!-- Gradiente em tons de vermelho para o pin -->
+    <linearGradient id="pinGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF416C"/>
+      <stop offset="100%" stop-color="#FF4B2B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Mapa sGIS com Gradiente Moderno -->
+  <path fill="url(#mapaGradient)" d="M638-511v-1.5 1.5-189 189ZM170-142q-17 9-33.5-1T120-173v-558q0-13 7.5-23t19.5-15l202-71 263 92 178-71q17-8 33.5 1.5T840-788v388q-11-21-26-38.5T780-470v-284l-142 54v189q-16 2-31 5t-29 8v-202l-196-66v540l-212 84Zm10-65 142-54v-505l-142 47v512Zm538-31q26-26 26-64t-26-64q-26-26-64-26t-64 26q-26 26-26 64t26 64q26 26 64 26t64-26Zm-64 86q-62 0-106-44t-44-106q0-63 44-106.5T654-452q63 0 106.5 43.5T804-302q0 23-6.5 44T779-219l101 101-38 38-101-100q-19 14-40.5 21t-46.5 7ZM322-766v505-505Z"/>
+
+  <!-- Pin de Localização Ligeiramente Menor Dentro da Lupa -->
+  <g transform="translate(577, -212) scale(0.16)" fill="url(#pinGradient)">
+    <path d="M480-80Q319-217 239.5-334.5T160-552q0-150 96.5-239T480-880q127 0 223.5 89T800-552q0 100-79.5 217.5T480-80Z"/>
+  </g>
+</svg>
+</div>
+<script>
+window.addEventListener('DOMContentLoaded', () => {
+    const results = {};
+    document.querySelectorAll('svg[data-filename]').forEach(svg => {
+        const fname = svg.getAttribute('data-filename');
+        const bbox = svg.getBBox();
+        results[fname] = { x: bbox.x, y: bbox.y, width: bbox.width, height: bbox.height };
+    });
+    document.getElementById('results').textContent = JSON.stringify(results);
+});
+</script></body></html>

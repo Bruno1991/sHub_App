@@ -1,0 +1,26 @@
+# Gradle / Build
+.gradle/
+.kotlin/
+.wrapper-bootstrap/
+build/
+**/build/
+local.properties
+.idea/
+*.iml
+*.ipr
+*.iws
+captures/
+
+# APK / Large binaries
+*.apk
+*.aab
+*.jks
+*.keystore
+*.mp4
+*.gpkg
+
+# Logs & temp
+*.log
+*.tmp
+.DS_Store
+Thumbs.db

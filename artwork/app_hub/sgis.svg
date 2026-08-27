@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" height="48px" viewBox="0 -960 960 960" width="48px">
+  <defs>
+    <!-- Gradiente moderno do sHub para o mapa (Indigo -> Azul -> Ciano) -->
+    <linearGradient id="mapaGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366F1"/>
+      <stop offset="50%" stop-color="#3B82F6"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+
+    <!-- Gradiente em tons de vermelho para o pin -->
+    <linearGradient id="pinGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF416C"/>
+      <stop offset="100%" stop-color="#FF4B2B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Mapa sGIS com Gradiente Moderno -->
+  <path fill="url(#mapaGradient)" d="M638-511v-1.5 1.5-189 189ZM170-142q-17 9-33.5-1T120-173v-558q0-13 7.5-23t19.5-15l202-71 263 92 178-71q17-8 33.5 1.5T840-788v388q-11-21-26-38.5T780-470v-284l-142 54v189q-16 2-31 5t-29 8v-202l-196-66v540l-212 84Zm10-65 142-54v-505l-142 47v512Zm538-31q26-26 26-64t-26-64q-26-26-64-26t-64 26q-26 26-26 64t26 64q26 26 64 26t64-26Zm-64 86q-62 0-106-44t-44-106q0-63 44-106.5T654-452q63 0 106.5 43.5T804-302q0 23-6.5 44T779-219l101 101-38 38-101-100q-19 14-40.5 21t-46.5 7ZM322-766v505-505Z"/>
+
+  <!-- Pin de Localização Ligeiramente Menor Dentro da Lupa -->
+  <g transform="translate(577, -212) scale(0.16)" fill="url(#pinGradient)">
+    <path d="M480-80Q319-217 239.5-334.5T160-552q0-150 96.5-239T480-880q127 0 223.5 89T800-552q0 100-79.5 217.5T480-80Z"/>
+  </g>
+</svg>

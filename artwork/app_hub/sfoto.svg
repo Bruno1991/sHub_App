@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" height="48px" viewBox="0 -960 960 960" width="48px">
+  <defs>
+    <!-- Gradiente moderno para a câmera (Indigo -> Azul -> Ciano) -->
+    <linearGradient id="cameraGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366F1"/>
+      <stop offset="50%" stop-color="#3B82F6"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+
+    <!-- Gradiente em tons de vermelho moderno para o pin (Carmim -> Laranja avermelhado) -->
+    <linearGradient id="pinGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF416C"/>
+      <stop offset="100%" stop-color="#FF4B2B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Corpo da Câmera preenchido com gradiente, mantendo apenas o círculo do centro vazio -->
+  <path fill="url(#cameraGradient)" fill-rule="evenodd" d="M140-120q-24 0-42-18t-18-42v-513q0-23 18-41.5t42-18.5h147l73-87h240l73 87h147q23 0 41.5 18.5T880-693v513q0 24-18.5 42T820-120H140ZM479.5-267q72.5 0 121.5-49t49-121.5q0-72.5-49-121T479.5-607q-72.5 0-121 48.5t-48.5 121q0 72.5 48.5 121.5t121 49Z"/>
+
+  <!-- Pin de Localização Alinhado Horizontalmente e Deslocado para Cima (Apontando para a Lente) -->
+  <g transform="translate(307, -440) scale(0.36)" fill="url(#pinGradient)">
+    <path d="M480-80Q319-217 239.5-334.5T160-552q0-150 96.5-239T480-880q127 0 223.5 89T800-552q0 100-79.5 217.5T480-80Z"/>
+  </g>
+</svg>

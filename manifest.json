@@ -1,0 +1,15 @@
+{
+  "name": "sHub Engineering Package",
+  "date": "2026-07-14",
+  "includes": [
+    "docs",
+    "skills",
+    "agents",
+    "assets/icons",
+    "assets/mockups",
+    "templates",
+    "tests"
+  ],
+  "primary_start_file": "AGENTS.md",
+  "operator_command": "leia AGENTS.md"
+}

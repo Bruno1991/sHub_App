@@ -1,0 +1,75 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "SAILE: Validar add-ons",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "tools/validate_addons.py"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "SAILE: Verificar segredos",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "tools/secret_scan.py"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "SAILE: Executar testes",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                "tests",
+                "-p",
+                "test_*.py",
+                "-v"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "SAILE: Gerar repositório",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "tools/build_repo.py"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "SAILE: Validação completa",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "SAILE: Validar add-ons",
+                "SAILE: Verificar segredos",
+                "SAILE: Executar testes",
+                "SAILE: Gerar repositório"
+            ],
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        }
+    ]
+}

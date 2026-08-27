@@ -1,0 +1,40 @@
+{
+    "files.autoSave": "afterDelay",
+    "files.autoSaveDelay": 750,
+    "files.hotExit": "onExitAndWindowClose",
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "editor.trimAutoWhitespace": true,
+    "editor.formatOnSave": false,
+    "terminal.integrated.cwd": "${workspaceFolder}",
+    "git.autofetch": true,
+    "git.confirmSync": false,
+    "git.enableSmartCommit": true,
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/.pytest_cache": true
+    },
+    "search.exclude": {
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/.pytest_cache": true,
+        "**/site": true
+    },
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/addons/plugin.video.stv/resources/lib",
+        "${workspaceFolder}/addons/plugin.audio.sfy/resources/lib",
+        "${workspaceFolder}/addons/script.module.saile.core/lib"
+    ],
+    "python.testing.unittestEnabled": true,
+    "python.testing.pytestEnabled": false,
+    "python.testing.unittestArgs": [
+        "-v",
+        "-s",
+        "./tests",
+        "-p",
+        "test_*.py"
+    ]
+}
