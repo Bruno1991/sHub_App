@@ -1,3 +1,14 @@
+# Environment & Secrets
+.env
+*.env
+.env.*
+gradle.properties
+secrets/
+
+# Engineering Library (lives in C:/dev root)
+engineering-library/
+Biblioteca_Universal_Corporativa/
+
 # Gradle / Build
 .gradle/
 .kotlin/
