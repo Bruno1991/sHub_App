@@ -6,9 +6,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -52,7 +52,7 @@ fun PhotoSettingsDrawer(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onClose) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "Voltar")
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Configurações", style = MaterialTheme.typography.titleLarge)
@@ -65,6 +65,14 @@ fun PhotoSettingsDrawer(
             ListItem(
                 headlineContent = { Text("Exibir GEO") },
                 trailingContent = { Switch(checked = state.showGeo, onCheckedChange = viewModel::toggleGeo) }
+            )
+            ListItem(
+                headlineContent = { Text("Exibir Altitude / Cota") },
+                trailingContent = { Switch(checked = state.showAltitude, onCheckedChange = viewModel::toggleAltitude) }
+            )
+            ListItem(
+                headlineContent = { Text("Exibir Azimute / Bússola") },
+                trailingContent = { Switch(checked = state.showAzimuth, onCheckedChange = viewModel::toggleAzimuth) }
             )
             ListItem(
                 headlineContent = { Text("Exibir Data e Hora") },
@@ -86,6 +94,14 @@ fun PhotoSettingsDrawer(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                 )
             }
+            ListItem(
+                headlineContent = { Text("Fundo de Alto Contraste") },
+                trailingContent = { Switch(checked = state.showBackgroundBox, onCheckedChange = viewModel::toggleBackgroundBox) }
+            )
+            ListItem(
+                headlineContent = { Text("Grade de Enquadramento 3x3") },
+                trailingContent = { Switch(checked = state.showGrid, onCheckedChange = viewModel::toggleGrid) }
+            )
             ListItem(
                 headlineContent = { Text("Som do Obturador") },
                 trailingContent = { Switch(checked = state.playShutterSound, onCheckedChange = viewModel::toggleShutterSound) }

@@ -39,6 +39,10 @@ data class PhotoUiState(
     val showDateTime: Boolean = true,
     val showAddress: Boolean = true,
     val showName: Boolean = false,
+    val showAltitude: Boolean = true,
+    val showAzimuth: Boolean = true,
+    val showBackgroundBox: Boolean = false,
+    val showGrid: Boolean = false,
     val userName: String = "sFoto",
     val position: OverlayPosition = OverlayPosition.BOTTOM_RIGHT,
     val lensFacingBack: Boolean = true,
@@ -70,6 +74,10 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleDateTime(show: Boolean) = updateState { it.copy(showDateTime = show) }
     fun toggleAddress(show: Boolean) = updateState { it.copy(showAddress = show) }
     fun toggleName(show: Boolean) = updateState { it.copy(showName = show) }
+    fun toggleAltitude(show: Boolean) = updateState { it.copy(showAltitude = show) }
+    fun toggleAzimuth(show: Boolean) = updateState { it.copy(showAzimuth = show) }
+    fun toggleBackgroundBox(show: Boolean) = updateState { it.copy(showBackgroundBox = show) }
+    fun toggleGrid(show: Boolean) = updateState { it.copy(showGrid = show) }
     fun setUserName(name: String) = updateState { it.copy(userName = name) }
     fun setPosition(pos: OverlayPosition) = updateState { it.copy(position = pos) }
     fun toggleLens() = updateState { it.copy(lensFacingBack = !it.lensFacingBack) }

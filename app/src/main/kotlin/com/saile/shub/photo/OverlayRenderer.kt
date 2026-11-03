@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.location.Location
@@ -40,6 +41,14 @@ object OverlayRenderer {
             typeface = Typeface.DEFAULT
             isLinearText = true
             setShadowLayer(3f, 1.5f, 1.5f, Color.BLACK)
+        }
+    }
+
+    // High-contrast background box paint
+    private val threadLocalBoxPaint = object : ThreadLocal<Paint>() {
+        override fun initialValue(): Paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(128, 0, 0, 0)
+            style = Paint.Style.FILL
         }
     }
 
@@ -96,26 +105,42 @@ object OverlayRenderer {
         return text
     }
 
-    // Location (UTM / Geo) text memoization
+    // Location (UTM / Geo / Altitude) text memoization
     private class LocationCacheEntry(
         val latitude: Double,
         val longitude: Double,
+        val altitude: Double?,
+        val accuracy: Float?,
         val utmText: String,
         val geoText: String,
+        val altitudeText: String,
     )
 
     @Volatile
     private var lastLocationCache: LocationCacheEntry? = null
 
     internal fun getCachedLocationTexts(location: Location?): Pair<String, String> {
+        val info = getCachedLocationInfo(location)
+        return info.utmText to info.geoText
+    }
+
+    internal fun getCachedAltitudeText(location: Location?): String =
+        getCachedLocationInfo(location).altitudeText
+
+    private fun getCachedLocationInfo(location: Location?): LocationCacheEntry {
         if (location == null) {
-            return "indisponível" to "indisponível"
+            return LocationCacheEntry(0.0, 0.0, null, null, "indisponível", "indisponível", "indisponível")
         }
         val lat = location.latitude
         val lon = location.longitude
+        val alt = if (location.hasAltitude()) location.altitude else null
+        val acc = if (location.hasAccuracy()) location.accuracy else null
+
         val current = lastLocationCache
-        if (current != null && current.latitude == lat && current.longitude == lon) {
-            return current.utmText to current.geoText
+        if (current != null && current.latitude == lat && current.longitude == lon &&
+            current.altitude == alt && current.accuracy == acc
+        ) {
+            return current
         }
 
         val geo = GeoCoordinate(lat, lon)
@@ -125,8 +150,52 @@ object OverlayRenderer {
         val band = bands[bandIndex]
         val utmText = "${utm.zone}$band %.0f %.0f".format(Locale.US, utm.easting, utm.northing)
         val geoText = "%.7f, %.7f".format(Locale.US, lat, lon)
-        lastLocationCache = LocationCacheEntry(lat, lon, utmText, geoText)
-        return utmText to geoText
+        val altitudeText = when {
+            alt != null && acc != null -> "Alt: %.0fm (±%.1fm)".format(Locale.US, alt, acc)
+            alt != null -> "Alt: %.0fm".format(Locale.US, alt)
+            acc != null -> "Precisão: ±%.1fm".format(Locale.US, acc)
+            else -> "indisponível"
+        }
+
+        val entry = LocationCacheEntry(lat, lon, alt, acc, utmText, geoText, altitudeText)
+        lastLocationCache = entry
+        return entry
+    }
+
+    // Compass / Azimuth text memoization
+    internal fun getCardinalDirection(azimuthDegrees: Float): String {
+        val normalized = (azimuthDegrees % 360f + 360f) % 360f
+        return when {
+            normalized >= 337.5f || normalized < 22.5f -> "N"
+            normalized < 67.5f -> "NE"
+            normalized < 112.5f -> "L"
+            normalized < 157.5f -> "SE"
+            normalized < 202.5f -> "S"
+            normalized < 247.5f -> "SO"
+            normalized < 292.5f -> "O"
+            else -> "NO"
+        }
+    }
+
+    private class AzimuthCacheEntry(
+        val degreesInt: Int,
+        val azimuthText: String,
+    )
+
+    @Volatile
+    private var lastAzimuthCache: AzimuthCacheEntry? = null
+
+    internal fun getCachedAzimuthText(azimuthDegrees: Float?): String {
+        if (azimuthDegrees == null) return "indisponível"
+        val deg = ((azimuthDegrees % 360f + 360f) % 360f).toInt()
+        val current = lastAzimuthCache
+        if (current != null && current.degreesInt == deg) {
+            return current.azimuthText
+        }
+        val cardinal = getCardinalDirection(azimuthDegrees)
+        val text = "$deg° $cardinal"
+        lastAzimuthCache = AzimuthCacheEntry(deg, text)
+        return text
     }
 
     // Cached pre-measured row layout
@@ -148,11 +217,16 @@ object OverlayRenderer {
         val showName: Boolean,
         val showUtm: Boolean,
         val showGeo: Boolean,
+        val showAltitude: Boolean,
+        val showAzimuth: Boolean,
         val showDateTime: Boolean,
         val showAddress: Boolean,
+        val showBackgroundBox: Boolean,
         val userName: String,
         val utmText: String,
         val geoText: String,
+        val altitudeText: String,
+        val azimuthText: String,
         val dateText: String,
         val resolvedAddress: String?,
         val selectedLogo: String?,
@@ -220,6 +294,8 @@ object OverlayRenderer {
         colorArgb: Int,
         utmText: String,
         geoText: String,
+        altitudeText: String,
+        azimuthText: String,
         dateText: String,
     ): CachedOverlayLayout {
         val current = cachedLayout
@@ -233,11 +309,16 @@ object OverlayRenderer {
             current.showName == overlay.showName &&
             current.showUtm == overlay.showUtm &&
             current.showGeo == overlay.showGeo &&
+            current.showAltitude == overlay.showAltitude &&
+            current.showAzimuth == overlay.showAzimuth &&
             current.showDateTime == overlay.showDateTime &&
             current.showAddress == overlay.showAddress &&
+            current.showBackgroundBox == overlay.showBackgroundBox &&
             current.userName == overlay.userName &&
             current.utmText == utmText &&
             current.geoText == geoText &&
+            current.altitudeText == altitudeText &&
+            current.azimuthText == azimuthText &&
             current.dateText == dateText &&
             current.resolvedAddress == overlay.resolvedAddress &&
             current.selectedLogo == overlay.selectedLogo
@@ -257,11 +338,16 @@ object OverlayRenderer {
                 locked.showName == overlay.showName &&
                 locked.showUtm == overlay.showUtm &&
                 locked.showGeo == overlay.showGeo &&
+                locked.showAltitude == overlay.showAltitude &&
+                locked.showAzimuth == overlay.showAzimuth &&
                 locked.showDateTime == overlay.showDateTime &&
                 locked.showAddress == overlay.showAddress &&
+                locked.showBackgroundBox == overlay.showBackgroundBox &&
                 locked.userName == overlay.userName &&
                 locked.utmText == utmText &&
                 locked.geoText == geoText &&
+                locked.altitudeText == altitudeText &&
+                locked.azimuthText == azimuthText &&
                 locked.dateText == dateText &&
                 locked.resolvedAddress == overlay.resolvedAddress &&
                 locked.selectedLogo == overlay.selectedLogo
@@ -293,6 +379,8 @@ object OverlayRenderer {
 
             val wrappedUtm = if (overlay.showUtm) wrapText(utmText, textPaint, maxTextWidth) else emptyList()
             val wrappedGeo = if (overlay.showGeo) wrapText(geoText, textPaint, maxTextWidth) else emptyList()
+            val wrappedAltitude = if (overlay.showAltitude) wrapText(altitudeText, textPaint, maxTextWidth) else emptyList()
+            val wrappedAzimuth = if (overlay.showAzimuth) wrapText(azimuthText, textPaint, maxTextWidth) else emptyList()
             val wrappedDate = if (overlay.showDateTime) wrapText(dateText, textPaint, maxTextWidth) else emptyList()
             val wrappedAddress = if (overlay.showAddress && !overlay.resolvedAddress.isNullOrEmpty()) {
                 wrapText(overlay.resolvedAddress, textPaint, maxTextWidth)
@@ -310,6 +398,8 @@ object OverlayRenderer {
             if (overlay.showName) buildRow(listOf(R.drawable.ic_badge), wrappedName)?.let { rows.add(it) }
             if (overlay.showUtm) buildRow(listOf(R.drawable.ic_globe), wrappedUtm)?.let { rows.add(it) }
             if (overlay.showGeo) buildRow(listOf(R.drawable.ic_location_on), wrappedGeo)?.let { rows.add(it) }
+            if (overlay.showAltitude) buildRow(listOf(R.drawable.ic_altitude), wrappedAltitude)?.let { rows.add(it) }
+            if (overlay.showAzimuth) buildRow(listOf(R.drawable.ic_explore), wrappedAzimuth)?.let { rows.add(it) }
             if (overlay.showDateTime) buildRow(listOf(R.drawable.ic_calendar, R.drawable.ic_clock), wrappedDate)?.let { rows.add(it) }
             if (overlay.showAddress) buildRow(listOf(R.drawable.ic_near_me), wrappedAddress)?.let { rows.add(it) }
 
@@ -386,11 +476,16 @@ object OverlayRenderer {
                 showName = overlay.showName,
                 showUtm = overlay.showUtm,
                 showGeo = overlay.showGeo,
+                showAltitude = overlay.showAltitude,
+                showAzimuth = overlay.showAzimuth,
                 showDateTime = overlay.showDateTime,
                 showAddress = overlay.showAddress,
+                showBackgroundBox = overlay.showBackgroundBox,
                 userName = overlay.userName,
                 utmText = utmText,
                 geoText = geoText,
+                altitudeText = altitudeText,
+                azimuthText = azimuthText,
                 dateText = dateText,
                 resolvedAddress = overlay.resolvedAddress,
                 selectedLogo = overlay.selectedLogo,
@@ -451,7 +546,8 @@ object OverlayRenderer {
         }
 
         val colorArgb = overlay.color.color.toArgb()
-        val (utmText, geoText) = getCachedLocationTexts(overlay.location)
+        val locInfo = getCachedLocationInfo(overlay.location)
+        val azimuthText = getCachedAzimuthText(overlay.azimuthDegrees)
         val dateText = getCachedDateText(overlay.capturedAt)
 
         val layout = getOrComputeLayout(
@@ -462,8 +558,10 @@ object OverlayRenderer {
             verticalEdgeInsetFraction = verticalEdgeInsetFraction,
             overlay = overlay,
             colorArgb = colorArgb,
-            utmText = utmText,
-            geoText = geoText,
+            utmText = locInfo.utmText,
+            geoText = locInfo.geoText,
+            altitudeText = locInfo.altitudeText,
+            azimuthText = azimuthText,
             dateText = dateText,
         )
 
@@ -485,6 +583,21 @@ object OverlayRenderer {
             val maxWidth = layout.maxWidth
             val isRightAligned = layout.isRightAligned
             val isCenterAligned = layout.isCenterAligned
+
+            // Draw high-contrast translucent background box if enabled
+            if (layout.showBackgroundBox) {
+                val boxPaint = threadLocalBoxPaint.get() ?: Paint().apply {
+                    color = Color.argb(128, 0, 0, 0)
+                    style = Paint.Style.FILL
+                }
+                val boxRect = RectF(
+                    left - padding * 0.25f,
+                    layout.top - padding * 0.25f,
+                    right + padding * 0.25f,
+                    layout.top + layout.boxHeight + padding * 0.25f,
+                )
+                canvas.drawRoundRect(boxRect, padding * 0.4f, padding * 0.4f, boxPaint)
+            }
 
             var currentY = layout.top + padding + baseSize
 

@@ -31,6 +31,10 @@ data class PhotoOverlay(
     val showDateTime: Boolean = true,
     val showAddress: Boolean = true,
     val showName: Boolean = false,
+    val showAltitude: Boolean = true,
+    val showAzimuth: Boolean = true,
+    val showBackgroundBox: Boolean = false,
+    val azimuthDegrees: Float? = null,
     val userName: String = "sFoto",
     val position: OverlayPosition = OverlayPosition.BOTTOM_RIGHT,
     val resolvedAddress: String? = null,
@@ -168,6 +172,7 @@ class PhotoCapture(private val executor: Executor) {
                             if (isFrontCamera) {
                                 runCatching { flipJpegHorizontally(context, uri) }
                             }
+                            runCatching { writeExifMetadata(context, uri, overlay) }
                             runCatching { saveMetadata(context, uri, overlay) }.onFailure {
                                 ContextCompat.getMainExecutor(context).execute {
                                     onStatus("Foto salva, mas não foi possível registrar os metadados.", uri)
@@ -211,6 +216,58 @@ class PhotoCapture(private val executor: Executor) {
             } finally {
                 flippedBitmap.recycle()
             }
+        }
+    }
+
+    private fun writeExifMetadata(context: Context, uri: android.net.Uri, overlay: PhotoOverlay) {
+        runCatching {
+            context.contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
+                val exif = androidx.exifinterface.media.ExifInterface(pfd.fileDescriptor)
+                val exifDate = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(overlay.capturedAt)
+                exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_DATETIME_ORIGINAL, exifDate)
+                exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_DATETIME, exifDate)
+
+                overlay.location?.let { loc ->
+                    exif.setLatLong(loc.latitude, loc.longitude)
+                    if (loc.hasAltitude()) {
+                        exif.setAltitude(loc.altitude)
+                    }
+                }
+
+                overlay.azimuthDegrees?.let { az ->
+                    exif.setAttribute(
+                        androidx.exifinterface.media.ExifInterface.TAG_GPS_IMG_DIRECTION,
+                        "%.0f/1".format(Locale.US, az)
+                    )
+                    exif.setAttribute(
+                        androidx.exifinterface.media.ExifInterface.TAG_GPS_IMG_DIRECTION_REF,
+                        "M"
+                    )
+                }
+
+                exif.setAttribute(
+                    androidx.exifinterface.media.ExifInterface.TAG_SOFTWARE,
+                    "sHub / sFoto"
+                )
+                exif.setAttribute(
+                    androidx.exifinterface.media.ExifInterface.TAG_ARTIST,
+                    overlay.userName
+                )
+
+                val comment = buildString {
+                    append("sHub Photo Metadata\n")
+                    overlay.resolvedAddress?.let { append("Endereço: $it\n") }
+                    append("Operador: ${overlay.userName}\n")
+                }
+                exif.setAttribute(
+                    androidx.exifinterface.media.ExifInterface.TAG_USER_COMMENT,
+                    comment
+                )
+
+                exif.saveAttributes()
+            }
+        }.onFailure { e ->
+            android.util.Log.w("sFotoExif", "Falha ao gravar tags EXIF", e)
         }
     }
 

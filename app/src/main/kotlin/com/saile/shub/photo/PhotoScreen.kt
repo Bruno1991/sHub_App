@@ -4,8 +4,13 @@ import android.Manifest
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.location.LocationManager
 import android.widget.Toast
+import kotlin.math.abs
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraControl
@@ -115,6 +120,7 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
     var cameraRetryToken by remember { mutableIntStateOf(0) }
     
     var deviceOrientationAngle by remember { mutableStateOf(0f) }
+    var currentAzimuthDegrees by remember { mutableStateOf<Float?>(null) }
     var isFrontFlashActive by remember { mutableStateOf(false) }
     val isCaptureScreenVisible = !isSettingsOpen && !isGalleryOpen
 
@@ -127,6 +133,10 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
         showDateTime = state.showDateTime,
         showAddress = state.showAddress,
         showName = state.showName,
+        showAltitude = state.showAltitude,
+        showAzimuth = state.showAzimuth,
+        showBackgroundBox = state.showBackgroundBox,
+        azimuthDegrees = currentAzimuthDegrees,
         userName = state.userName,
         position = state.position,
         resolvedAddress = resolvedAddress,
@@ -305,6 +315,80 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
         listener.enable()
         onDispose { listener.disable() }
     }
+
+    DisposableEffect(Unit) {
+        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        if (sensorManager == null) {
+            onDispose {}
+        } else {
+            val rotationVectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+                ?: sensorManager.getDefaultSensor(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR)
+            val accelSensor = if (rotationVectorSensor == null) sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) else null
+            val magSensor = if (rotationVectorSensor == null) sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD) else null
+
+            val rotationMatrix = FloatArray(9)
+            val orientationValues = FloatArray(3)
+            val lastAccel = FloatArray(3)
+            val lastMag = FloatArray(3)
+            var hasAccel = false
+            var hasMag = false
+            var lastReportedDeg: Float? = null
+
+            val updateAzimuthIfChanged: (Float) -> Unit = { newDeg ->
+                val prev = lastReportedDeg
+                if (prev == null || abs(newDeg - prev) >= 1.0f) {
+                    lastReportedDeg = newDeg
+                    currentAzimuthDegrees = newDeg
+                }
+            }
+
+            val sensorListener = object : SensorEventListener {
+                override fun onSensorChanged(event: SensorEvent) {
+                    when (event.sensor.type) {
+                        Sensor.TYPE_ROTATION_VECTOR, Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR -> {
+                            SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                            SensorManager.getOrientation(rotationMatrix, orientationValues)
+                            val deg = ((Math.toDegrees(orientationValues[0].toDouble()) + 360.0) % 360.0).toFloat()
+                            updateAzimuthIfChanged(deg)
+                        }
+                        Sensor.TYPE_ACCELEROMETER -> {
+                            System.arraycopy(event.values, 0, lastAccel, 0, 3)
+                            hasAccel = true
+                            computeFallback()
+                        }
+                        Sensor.TYPE_MAGNETIC_FIELD -> {
+                            System.arraycopy(event.values, 0, lastMag, 0, 3)
+                            hasMag = true
+                            computeFallback()
+                        }
+                    }
+                }
+
+                private fun computeFallback() {
+                    if (hasAccel && hasMag) {
+                        if (SensorManager.getRotationMatrix(rotationMatrix, null, lastAccel, lastMag)) {
+                            SensorManager.getOrientation(rotationMatrix, orientationValues)
+                            val deg = ((Math.toDegrees(orientationValues[0].toDouble()) + 360.0) % 360.0).toFloat()
+                            updateAzimuthIfChanged(deg)
+                        }
+                    }
+                }
+
+                override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+            }
+
+            if (rotationVectorSensor != null) {
+                sensorManager.registerListener(sensorListener, rotationVectorSensor, SensorManager.SENSOR_DELAY_UI)
+            } else {
+                if (accelSensor != null) sensorManager.registerListener(sensorListener, accelSensor, SensorManager.SENSOR_DELAY_UI)
+                if (magSensor != null) sensorManager.registerListener(sensorListener, magSensor, SensorManager.SENSOR_DELAY_UI)
+            }
+
+            onDispose {
+                sensorManager.unregisterListener(sensorListener)
+            }
+        }
+    }
     
     val outputRotation = cameraOutputRotation(deviceOrientationAngle.toInt())
 
@@ -455,6 +539,39 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
                         },
                         onCameraError = { message -> cameraError = message }
                     )
+                    if (state.showGrid) {
+                        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                            val gridColor = Color(0x55FFFFFF)
+                            val strokeWidth = 1.dp.toPx()
+                            val w = size.width
+                            val h = size.height
+
+                            drawLine(
+                                color = gridColor,
+                                start = androidx.compose.ui.geometry.Offset(w / 3f, 0f),
+                                end = androidx.compose.ui.geometry.Offset(w / 3f, h),
+                                strokeWidth = strokeWidth
+                            )
+                            drawLine(
+                                color = gridColor,
+                                start = androidx.compose.ui.geometry.Offset(w * 2f / 3f, 0f),
+                                end = androidx.compose.ui.geometry.Offset(w * 2f / 3f, h),
+                                strokeWidth = strokeWidth
+                            )
+                            drawLine(
+                                color = gridColor,
+                                start = androidx.compose.ui.geometry.Offset(0f, h / 3f),
+                                end = androidx.compose.ui.geometry.Offset(w, h / 3f),
+                                strokeWidth = strokeWidth
+                            )
+                            drawLine(
+                                color = gridColor,
+                                start = androidx.compose.ui.geometry.Offset(0f, h * 2f / 3f),
+                                end = androidx.compose.ui.geometry.Offset(w, h * 2f / 3f),
+                                strokeWidth = strokeWidth
+                            )
+                        }
+                    }
                 } else {
                     Column(
                         modifier = Modifier.align(Alignment.Center).padding(24.dp),

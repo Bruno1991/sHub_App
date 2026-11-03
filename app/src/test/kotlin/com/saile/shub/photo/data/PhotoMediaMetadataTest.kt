@@ -59,4 +59,72 @@ class PhotoMediaMetadataTest {
         assertFalse(text.contains("Endereço:"))
         assertFalse(text.contains("Nome:"))
     }
+
+    @Test
+    fun overlayTextIncludesAltitudeAndAzimuthWhenPresentAndEnabled() {
+        val metadata = PhotoMediaMetadata(
+            uri = "content://media/example/3",
+            latitude = -11.434,
+            longitude = -61.447,
+            capturedAt = 1000L,
+            address = null,
+            userName = "Topografo",
+            showUtm = true,
+            showGeo = true,
+            showDateTime = false,
+            showAddress = false,
+            showName = true,
+            altitude = 250.0,
+            accuracy = 4.2f,
+            azimuth = 185f,
+            showAltitude = true,
+            showAzimuth = true,
+        )
+
+        val text = metadata.overlayText()
+
+        assertTrue(text.contains("Alt: 250m (±4.2m)"))
+        assertTrue(text.contains("AZ: 185° S"))
+        assertTrue(text.contains("Nome: Topografo"))
+    }
+
+    @Test
+    fun overlayTextSuppressesAltitudeAndAzimuthWhenToggledOff() {
+        val metadata = PhotoMediaMetadata(
+            uri = "content://media/example/4",
+            latitude = -11.434,
+            longitude = -61.447,
+            capturedAt = 1000L,
+            address = null,
+            userName = "Topografo",
+            showUtm = true,
+            showGeo = true,
+            showDateTime = false,
+            showAddress = false,
+            showName = true,
+            altitude = 250.0,
+            accuracy = 4.2f,
+            azimuth = 185f,
+            showAltitude = false,
+            showAzimuth = false,
+        )
+
+        val text = metadata.overlayText()
+
+        assertFalse(text.contains("Alt:"))
+        assertFalse(text.contains("AZ:"))
+    }
+
+    @Test
+    fun getCardinalDirectionCoversAllEightSectors() {
+        org.junit.Assert.assertEquals("N", PhotoMediaMetadata.getCardinalDirection(0f))
+        org.junit.Assert.assertEquals("NE", PhotoMediaMetadata.getCardinalDirection(45f))
+        org.junit.Assert.assertEquals("L", PhotoMediaMetadata.getCardinalDirection(90f))
+        org.junit.Assert.assertEquals("SE", PhotoMediaMetadata.getCardinalDirection(135f))
+        org.junit.Assert.assertEquals("S", PhotoMediaMetadata.getCardinalDirection(180f))
+        org.junit.Assert.assertEquals("SO", PhotoMediaMetadata.getCardinalDirection(225f))
+        org.junit.Assert.assertEquals("O", PhotoMediaMetadata.getCardinalDirection(270f))
+        org.junit.Assert.assertEquals("NO", PhotoMediaMetadata.getCardinalDirection(315f))
+        org.junit.Assert.assertEquals("N", PhotoMediaMetadata.getCardinalDirection(359f))
+    }
 }

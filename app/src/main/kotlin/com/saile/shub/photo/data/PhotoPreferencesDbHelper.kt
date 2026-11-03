@@ -12,7 +12,7 @@ import com.saile.shub.photo.PhotoUiState
 class PhotoPreferencesDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
 
     companion object {
-        const val DATABASE_VERSION = 2
+        const val DATABASE_VERSION = 3
         const val DATABASE_NAME = "sfoto_prefs.db"
 
         const val TABLE_PREFS = "photo_prefs"
@@ -23,6 +23,10 @@ class PhotoPreferencesDbHelper(context: Context) : SQLiteOpenHelper(context, DAT
         const val COL_SHOW_DATETIME = "showDateTime"
         const val COL_SHOW_ADDRESS = "showAddress"
         const val COL_SHOW_NAME = "showName"
+        const val COL_SHOW_ALTITUDE = "showAltitude"
+        const val COL_SHOW_AZIMUTH = "showAzimuth"
+        const val COL_SHOW_BACKGROUND_BOX = "showBackgroundBox"
+        const val COL_SHOW_GRID = "showGrid"
         const val COL_USER_NAME = "userName"
         const val COL_POSITION = "position"
         const val COL_LENS_FACING_BACK = "lensFacingBack"
@@ -39,6 +43,10 @@ class PhotoPreferencesDbHelper(context: Context) : SQLiteOpenHelper(context, DAT
                 $COL_SHOW_DATETIME INTEGER,
                 $COL_SHOW_ADDRESS INTEGER,
                 $COL_SHOW_NAME INTEGER,
+                $COL_SHOW_ALTITUDE INTEGER,
+                $COL_SHOW_AZIMUTH INTEGER,
+                $COL_SHOW_BACKGROUND_BOX INTEGER,
+                $COL_SHOW_GRID INTEGER,
                 $COL_USER_NAME TEXT,
                 $COL_POSITION TEXT,
                 $COL_LENS_FACING_BACK INTEGER,
@@ -53,7 +61,6 @@ class PhotoPreferencesDbHelper(context: Context) : SQLiteOpenHelper(context, DAT
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(SQL_CREATE_ENTRIES)
-        // Inserir linha padrão com ID = 1
         val defaultState = PhotoUiState()
         val values = ContentValues().apply {
             put(COL_ID, 1)
@@ -63,6 +70,10 @@ class PhotoPreferencesDbHelper(context: Context) : SQLiteOpenHelper(context, DAT
             put(COL_SHOW_DATETIME, if (defaultState.showDateTime) 1 else 0)
             put(COL_SHOW_ADDRESS, if (defaultState.showAddress) 1 else 0)
             put(COL_SHOW_NAME, if (defaultState.showName) 1 else 0)
+            put(COL_SHOW_ALTITUDE, if (defaultState.showAltitude) 1 else 0)
+            put(COL_SHOW_AZIMUTH, if (defaultState.showAzimuth) 1 else 0)
+            put(COL_SHOW_BACKGROUND_BOX, if (defaultState.showBackgroundBox) 1 else 0)
+            put(COL_SHOW_GRID, if (defaultState.showGrid) 1 else 0)
             put(COL_USER_NAME, defaultState.userName)
             put(COL_POSITION, defaultState.position.name)
             put(COL_LENS_FACING_BACK, if (defaultState.lensFacingBack) 1 else 0)
@@ -74,8 +85,15 @@ class PhotoPreferencesDbHelper(context: Context) : SQLiteOpenHelper(context, DAT
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL(SQL_DELETE_ENTRIES)
-        onCreate(db)
+        if (oldVersion < 3) {
+            runCatching { db.execSQL("ALTER TABLE $TABLE_PREFS ADD COLUMN $COL_SHOW_ALTITUDE INTEGER DEFAULT 1") }
+            runCatching { db.execSQL("ALTER TABLE $TABLE_PREFS ADD COLUMN $COL_SHOW_AZIMUTH INTEGER DEFAULT 1") }
+            runCatching { db.execSQL("ALTER TABLE $TABLE_PREFS ADD COLUMN $COL_SHOW_BACKGROUND_BOX INTEGER DEFAULT 0") }
+            runCatching { db.execSQL("ALTER TABLE $TABLE_PREFS ADD COLUMN $COL_SHOW_GRID INTEGER DEFAULT 0") }
+        } else {
+            db.execSQL(SQL_DELETE_ENTRIES)
+            onCreate(db)
+        }
     }
 
     fun getPreferences(): PhotoUiState {
@@ -83,6 +101,11 @@ class PhotoPreferencesDbHelper(context: Context) : SQLiteOpenHelper(context, DAT
         val cursor = db.query(TABLE_PREFS, null, "$COL_ID = ?", arrayOf("1"), null, null, null)
         var state = PhotoUiState()
         if (cursor.moveToFirst()) {
+            val altIdx = cursor.getColumnIndex(COL_SHOW_ALTITUDE)
+            val azIdx = cursor.getColumnIndex(COL_SHOW_AZIMUTH)
+            val bgIdx = cursor.getColumnIndex(COL_SHOW_BACKGROUND_BOX)
+            val gridIdx = cursor.getColumnIndex(COL_SHOW_GRID)
+
             state = PhotoUiState(
                 overlayColor = runCatching { OverlayColor.valueOf(cursor.getString(cursor.getColumnIndexOrThrow(COL_OVERLAY_COLOR))) }.getOrDefault(OverlayColor.YELLOW),
                 showUtm = cursor.getInt(cursor.getColumnIndexOrThrow(COL_SHOW_UTM)) == 1,
@@ -90,6 +113,10 @@ class PhotoPreferencesDbHelper(context: Context) : SQLiteOpenHelper(context, DAT
                 showDateTime = cursor.getInt(cursor.getColumnIndexOrThrow(COL_SHOW_DATETIME)) == 1,
                 showAddress = cursor.getInt(cursor.getColumnIndexOrThrow(COL_SHOW_ADDRESS)) == 1,
                 showName = cursor.getInt(cursor.getColumnIndexOrThrow(COL_SHOW_NAME)) == 1,
+                showAltitude = if (altIdx >= 0) cursor.getInt(altIdx) == 1 else true,
+                showAzimuth = if (azIdx >= 0) cursor.getInt(azIdx) == 1 else true,
+                showBackgroundBox = if (bgIdx >= 0) cursor.getInt(bgIdx) == 1 else false,
+                showGrid = if (gridIdx >= 0) cursor.getInt(gridIdx) == 1 else false,
                 userName = cursor.getString(cursor.getColumnIndexOrThrow(COL_USER_NAME)) ?: "sFoto",
                 position = runCatching { OverlayPosition.valueOf(cursor.getString(cursor.getColumnIndexOrThrow(COL_POSITION))) }.getOrDefault(OverlayPosition.BOTTOM_RIGHT),
                 lensFacingBack = cursor.getInt(cursor.getColumnIndexOrThrow(COL_LENS_FACING_BACK)) == 1,
@@ -111,6 +138,10 @@ class PhotoPreferencesDbHelper(context: Context) : SQLiteOpenHelper(context, DAT
             put(COL_SHOW_DATETIME, if (state.showDateTime) 1 else 0)
             put(COL_SHOW_ADDRESS, if (state.showAddress) 1 else 0)
             put(COL_SHOW_NAME, if (state.showName) 1 else 0)
+            put(COL_SHOW_ALTITUDE, if (state.showAltitude) 1 else 0)
+            put(COL_SHOW_AZIMUTH, if (state.showAzimuth) 1 else 0)
+            put(COL_SHOW_BACKGROUND_BOX, if (state.showBackgroundBox) 1 else 0)
+            put(COL_SHOW_GRID, if (state.showGrid) 1 else 0)
             put(COL_USER_NAME, state.userName)
             put(COL_POSITION, state.position.name)
             put(COL_LENS_FACING_BACK, if (state.lensFacingBack) 1 else 0)

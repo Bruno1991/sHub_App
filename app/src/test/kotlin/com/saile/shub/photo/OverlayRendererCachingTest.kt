@@ -14,9 +14,15 @@ class OverlayRendererCachingTest {
     private class FakeLocation(
         private val lat: Double,
         private val lon: Double,
+        private val alt: Double? = null,
+        private val acc: Float? = null,
     ) : Location("test") {
         override fun getLatitude(): Double = lat
         override fun getLongitude(): Double = lon
+        override fun hasAltitude(): Boolean = alt != null
+        override fun getAltitude(): Double = alt ?: 0.0
+        override fun hasAccuracy(): Boolean = acc != null
+        override fun getAccuracy(): Float = acc ?: 0f
     }
 
     private class FakePaint(
@@ -117,5 +123,51 @@ class OverlayRendererCachingTest {
         val lines = OverlayRenderer.wrapText("", paint, maxWidth = 500f)
 
         assertTrue(lines.isEmpty())
+    }
+
+    @Test
+    fun `azimuth text returns indisponivel for null azimuth`() {
+        val text = OverlayRenderer.getCachedAzimuthText(null)
+        assertEquals("indisponível", text)
+    }
+
+    @Test
+    fun `azimuth text formats degree and cardinal sector accurately`() {
+        assertEquals("0° N", OverlayRenderer.getCachedAzimuthText(0f))
+        assertEquals("45° NE", OverlayRenderer.getCachedAzimuthText(45f))
+        assertEquals("90° L", OverlayRenderer.getCachedAzimuthText(90f))
+        assertEquals("135° SE", OverlayRenderer.getCachedAzimuthText(135f))
+        assertEquals("180° S", OverlayRenderer.getCachedAzimuthText(180f))
+        assertEquals("225° SO", OverlayRenderer.getCachedAzimuthText(225f))
+        assertEquals("270° O", OverlayRenderer.getCachedAzimuthText(270f))
+        assertEquals("315° NO", OverlayRenderer.getCachedAzimuthText(315f))
+    }
+
+    @Test
+    fun `azimuth caching reuses string reference for same integer angle`() {
+        val text1 = OverlayRenderer.getCachedAzimuthText(90.2f)
+        val text2 = OverlayRenderer.getCachedAzimuthText(90.4f)
+        assertEquals("90° L", text1)
+        assertSame(text1, text2)
+    }
+
+    @Test
+    fun `altitude text formats altitude and accuracy`() {
+        val loc = FakeLocation(-11.434, -61.447, alt = 230.4, acc = 3.5f)
+        val altText = OverlayRenderer.getCachedAltitudeText(loc)
+        assertEquals("Alt: 230m (±3.5m)", altText)
+    }
+
+    @Test
+    fun `altitude text formats without accuracy if accuracy is absent`() {
+        val loc = FakeLocation(-11.434, -61.447, alt = 230.4, acc = null)
+        val altText = OverlayRenderer.getCachedAltitudeText(loc)
+        assertEquals("Alt: 230m", altText)
+    }
+
+    @Test
+    fun `altitude text returns indisponivel for null location`() {
+        val altText = OverlayRenderer.getCachedAltitudeText(null)
+        assertEquals("indisponível", altText)
     }
 }
