@@ -59,6 +59,12 @@ interface GisDao {
     @Query("SELECT * FROM imported_packages ORDER BY imported_at DESC")
     suspend fun getAllPackages(): List<ImportedPackageEntity>
 
+    @Query("DELETE FROM imported_packages")
+    suspend fun deleteAllPackages()
+
+    @Query("DELETE FROM gis_features")
+    suspend fun deleteAllFeatures()
+
     @Query("SELECT * FROM imported_packages WHERE status = 'ready' ORDER BY id DESC LIMIT 1")
     suspend fun getActivePackage(): ImportedPackageEntity?
 

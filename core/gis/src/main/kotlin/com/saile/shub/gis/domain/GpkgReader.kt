@@ -333,25 +333,25 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
             val type = when {
                 lower.contains("subesta") -> GisElementType.SUBSTATION
                 lower.contains("torre") -> GisElementType.TOWER
-                lower.contains("vão at") || lower.contains("vao at") -> GisElementType.SPAN_AT
+                lower.contains("vão at") || lower.contains("vao at") || lower.contains("vo at") -> GisElementType.SPAN_AT
                 lower.contains("transformador") -> GisElementType.TRANSFORMER
                 lower.contains("chave") -> GisElementType.SWITCH
                 lower.contains("regulador") -> GisElementType.REGULATOR
                 lower.contains("capacitor") -> GisElementType.CAPACITOR
-                lower.contains("vão mt") || lower.contains("vao mt") -> GisElementType.SPAN_MT
-                lower.contains("vão bt") || lower.contains("vao bt") -> GisElementType.SPAN_BT
+                lower.contains("vão mt") || lower.contains("vao mt") || lower.contains("vo mt") -> GisElementType.SPAN_MT
+                lower.contains("vão bt") || lower.contains("vao bt") || lower.contains("vo bt") -> GisElementType.SPAN_BT
                 lower.contains("poste") -> GisElementType.POLE
                 else -> GisElementType.OTHER
             }
 
-            // Zoom-based visibility filter
+            // Zoom-based progressive visibility filter matching professional GIS standards
             val shouldRender = when (type) {
                 GisElementType.SUBSTATION, GisElementType.TOWER, GisElementType.SPAN_AT -> true
                 GisElementType.TRANSFORMER, GisElementType.SWITCH, GisElementType.REGULATOR,
-                GisElementType.CAPACITOR, GisElementType.SPAN_MT -> zoomLevel >= 13.0
-                GisElementType.SPAN_BT -> zoomLevel >= 14.5
-                GisElementType.POLE -> zoomLevel >= 15.5
-                else -> zoomLevel >= 16.0
+                GisElementType.CAPACITOR, GisElementType.SPAN_MT -> zoomLevel >= 11.5
+                GisElementType.SPAN_BT -> zoomLevel >= 13.5
+                GisElementType.POLE -> zoomLevel >= 14.5
+                else -> zoomLevel >= 15.0
             }
 
             if (shouldRender) {
@@ -360,17 +360,20 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
         }
 
         // 2. Query each layer using its spatial R-Tree index
+        val utmZone = 20 // SIRGAS 2000 / UTM Zone 20S (EPSG 31980) used across Rondonia grid
         val utmCorners = runCatching {
-            val sw = UtmConverter.geoToUtm(GeoCoordinate(minLat, minLon))
-            val ne = UtmConverter.geoToUtm(GeoCoordinate(maxLat, maxLon))
-            Pair(
-                minOf(sw.easting, ne.easting),
-                maxOf(sw.easting, ne.easting)
-            ) to Pair(
-                minOf(sw.northing, ne.northing),
-                maxOf(sw.northing, ne.northing)
-            )
+            val sw = UtmConverter.geoToUtm(GeoCoordinate(minLat, minLon), forcedZone = utmZone)
+            val ne = UtmConverter.geoToUtm(GeoCoordinate(maxLat, maxLon), forcedZone = utmZone)
+            val nw = UtmConverter.geoToUtm(GeoCoordinate(maxLat, minLon), forcedZone = utmZone)
+            val se = UtmConverter.geoToUtm(GeoCoordinate(minLat, maxLon), forcedZone = utmZone)
+            val minE = minOf(sw.easting, ne.easting, nw.easting, se.easting)
+            val maxE = maxOf(sw.easting, ne.easting, nw.easting, se.easting)
+            val minN = minOf(sw.northing, ne.northing, nw.northing, se.northing)
+            val maxN = maxOf(sw.northing, ne.northing, nw.northing, se.northing)
+            Pair(minE, maxE) to Pair(minN, maxN)
         }.getOrNull()
+
+        val queryLimit = if (zoomLevel >= 14.0) 600 else 300
 
         for ((layer, type) in layersToRender) {
             val (geomCol, srsId) = getGeometryInfo(layer)
@@ -391,7 +394,7 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
             }
 
             val matchingFids = mutableListOf<Long>()
-            val rtreeSql = "SELECT id FROM \"$rtreeName\" WHERE minx <= ? AND maxx >= ? AND miny <= ? AND maxy >= ? LIMIT $maxPerLayer"
+            val rtreeSql = "SELECT id FROM \"$rtreeName\" WHERE minx <= ? AND maxx >= ? AND miny <= ? AND maxy >= ? LIMIT $queryLimit"
             runCatching {
                 database.rawQuery(rtreeSql, arrayOf(qMaxX.toString(), qMinX.toString(), qMaxY.toString(), qMinY.toString())).use { cursor ->
                     while (cursor.moveToNext()) {

@@ -21,7 +21,7 @@ object UtmConverter {
     private const val minUtmLatitude = -80.0
     private const val maxUtmLatitude = 84.0
 
-    fun geoToUtm(coordinate: GeoCoordinate): UtmCoordinate {
+    fun geoToUtm(coordinate: GeoCoordinate, forcedZone: Int? = null): UtmCoordinate {
         require(coordinate.latitude in minUtmLatitude..maxUtmLatitude) {
             "Latitude deve estar entre $minUtmLatitude e $maxUtmLatitude para UTM."
         }
@@ -29,7 +29,7 @@ object UtmConverter {
             "Longitude deve estar entre -180 e 180."
         }
 
-        val zone = if (coordinate.longitude == 180.0) 60 else {
+        val zone = forcedZone ?: if (coordinate.longitude == 180.0) 60 else {
             floor((coordinate.longitude + 180.0) / 6.0).toInt() + 1
         }
         val longitudeOrigin = (zone - 1) * 6 - 180 + 3

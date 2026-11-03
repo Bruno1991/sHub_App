@@ -27,13 +27,27 @@ class ImportGpkgUseCase(
     fun execute(uri: Uri, displayName: String): Flow<ImportProgress> = channelFlow {
         send(ImportProgress.CopyingFile)
 
-        // 1. Copy file to internal app storage using kernel DMA zero-copy transfer
-        val gpkgDir = File(context.filesDir, "gpkg")
-        if (!gpkgDir.exists()) gpkgDir.mkdirs()
+        // Close any active SQLite reader locks before replacing package files
+        SearchFeatureUseCase.closeCachedReader()
 
-        val safeName = displayName.replace(Regex("[^a-zA-Z0-9.-]"), "_")
-        val fileName = "${System.currentTimeMillis()}_$safeName"
-        val destFile = File(gpkgDir, fileName)
+        // 1. Clean up old packages from Room and disk to guarantee non-accumulative, overwriting storage
+        gisDao.deleteAllPackages()
+        gisDao.deleteAllFeatures()
+
+        val gpkgDir = File(context.filesDir, "gpkg")
+        if (gpkgDir.exists()) {
+            gpkgDir.listFiles()?.forEach { oldFile ->
+                runCatching { oldFile.delete() }
+            }
+        } else {
+            gpkgDir.mkdirs()
+        }
+
+        val safeName = displayName.replace(Regex("[^a-zA-Z0-9.-]"), "_").ifBlank { "BASE.gpkg" }
+        val destFile = File(gpkgDir, safeName)
+        if (destFile.exists()) {
+            runCatching { destFile.delete() }
+        }
 
         val transferredSuccessfully = runCatching {
             context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->

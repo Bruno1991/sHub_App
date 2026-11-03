@@ -140,14 +140,20 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onViewportChanged(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, zoom: Double) {
         viewportJob?.cancel()
-        if (zoom < 12.0) {
+        if (zoom < 8.0) {
             _visibleElements.value = emptyList()
             return
         }
         viewportJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(150)
+            delay(100)
             val active = db.gisDao().getActivePackage()
-            val reader = active?.let { SearchFeatureUseCase.getReader(it.fileUri) }
+            var fileUri = active?.fileUri
+            if (fileUri == null || !File(fileUri).exists()) {
+                val gpkgDir = File(getApplication<Application>().filesDir, "gpkg")
+                val f = gpkgDir.listFiles { file -> file.extension.equals("gpkg", ignoreCase = true) }?.firstOrNull()
+                fileUri = f?.absolutePath
+            }
+            val reader = fileUri?.let { SearchFeatureUseCase.getReader(it) }
             val elements = reader?.getFeaturesInBoundingBox(minLat, maxLat, minLon, maxLon, zoom)
             _visibleElements.value = elements ?: emptyList()
         }

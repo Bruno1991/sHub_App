@@ -61,6 +61,24 @@ class GisVectorOverlay(
         isAntiAlias = true
     }
 
+    private val towerPaint = Paint().apply {
+        color = Color.parseColor("#00838F") // Cyan / Steel for Towers
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+
+    private val regulatorPaint = Paint().apply {
+        color = Color.parseColor("#00897B") // Teal for Regulators
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+
+    private val capacitorPaint = Paint().apply {
+        color = Color.parseColor("#3949AB") // Indigo for Capacitors
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+
     private val borderPaint = Paint().apply {
         color = Color.WHITE
         strokeWidth = 2f
@@ -106,11 +124,14 @@ class GisVectorOverlay(
             if (elem is GisRenderElement.Point) {
                 pj.toPixels(GeoPoint(elem.latitude, elem.longitude), p1)
                 val (paint, radius) = when (elem.type) {
-                    GisElementType.SUBSTATION -> Pair(subPaint, 14f)
-                    GisElementType.TRANSFORMER -> Pair(trafoPaint, 9f)
-                    GisElementType.SWITCH -> Pair(switchPaint, 8f)
-                    GisElementType.POLE -> Pair(polePaint, 5.5f)
-                    else -> Pair(polePaint, 6f)
+                    GisElementType.SUBSTATION -> Pair(subPaint, 13f)
+                    GisElementType.TOWER -> Pair(towerPaint, 9f)
+                    GisElementType.TRANSFORMER -> Pair(trafoPaint, 8f)
+                    GisElementType.SWITCH -> Pair(switchPaint, 7f)
+                    GisElementType.REGULATOR -> Pair(regulatorPaint, 7f)
+                    GisElementType.CAPACITOR -> Pair(capacitorPaint, 7f)
+                    GisElementType.POLE -> Pair(polePaint, 5f)
+                    else -> Pair(polePaint, 5f)
                 }
 
                 canvas.drawCircle(p1.x.toFloat(), p1.y.toFloat(), radius + 1.5f, borderPaint)

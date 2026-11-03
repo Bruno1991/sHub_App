@@ -100,7 +100,7 @@ fun GisScreen(
     // React to visibleElements changes by updating vector overlay
     LaunchedEffect(visibleElements) {
         vectorOverlay.updateElements(visibleElements)
-        mapViewRef?.invalidate()
+        mapViewRef?.postInvalidate()
     }
 
     // React to selected target changes by animating map view
@@ -109,7 +109,7 @@ fun GisScreen(
         val map = mapViewRef
         if (target != null && map != null) {
             val geoPoint = GeoPoint(target.latitude, target.longitude)
-            map.controller.animateTo(geoPoint, target.zoomLevel, 800L)
+            map.controller.animateTo(geoPoint, target.zoomLevel, 600L)
             
             // Update marker
             map.overlays.removeAll { it is Marker }
@@ -120,7 +120,19 @@ fun GisScreen(
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             }
             map.overlays.add(marker)
-            map.invalidate()
+            map.postInvalidate()
+
+            kotlinx.coroutines.delay(650L)
+            val bbox = map.boundingBox
+            if (bbox != null) {
+                viewModel.onViewportChanged(
+                    minLat = bbox.latSouth,
+                    maxLat = bbox.latNorth,
+                    minLon = bbox.lonWest,
+                    maxLon = bbox.lonEast,
+                    zoom = target.zoomLevel
+                )
+            }
         }
     }
 
@@ -169,6 +181,19 @@ fun GisScreen(
                     // Center on Rondonia default
                     controller.setCenter(GeoPoint(-10.83, -61.95))
                     overlays.add(vectorOverlay)
+
+                    addOnFirstLayoutListener { v, _, _, _, _ ->
+                        val map = v as? MapView ?: return@addOnFirstLayoutListener
+                        val bbox = map.boundingBox ?: return@addOnFirstLayoutListener
+                        viewModel.onViewportChanged(
+                            minLat = bbox.latSouth,
+                            maxLat = bbox.latNorth,
+                            minLon = bbox.lonWest,
+                            maxLon = bbox.lonEast,
+                            zoom = map.zoomLevelDouble
+                        )
+                    }
+
                     addMapListener(object : org.osmdroid.events.MapListener {
                         override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
                             triggerViewport()

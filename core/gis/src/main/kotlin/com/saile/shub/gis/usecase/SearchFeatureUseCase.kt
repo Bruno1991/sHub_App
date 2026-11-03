@@ -61,6 +61,14 @@ class SearchFeatureUseCase(private val gisDao: GisDao) {
                 }
             }
         }
+
+        fun closeCachedReader() {
+            synchronized(lock) {
+                cachedReader?.close()
+                cachedReader = null
+                cachedPath = null
+            }
+        }
     }
 
     suspend fun execute(query: String, limit: Int = 100, offset: Int = 0): GisSearchResult = withContext(Dispatchers.IO) {
