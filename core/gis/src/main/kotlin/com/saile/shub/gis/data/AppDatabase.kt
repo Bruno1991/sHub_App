@@ -8,7 +8,7 @@ import com.saile.shub.gis.data.dao.GisDao
 
 @Database(
     entities = [ImportedPackageEntity::class, GisFeatureEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

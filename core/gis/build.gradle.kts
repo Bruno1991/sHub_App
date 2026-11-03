@@ -18,6 +18,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":core:geo"))
     implementation("androidx.core:core-ktx:1.15.0")
     
     val roomVersion = "2.6.1"

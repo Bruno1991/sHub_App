@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.text.Normalizer
@@ -59,8 +60,8 @@ class ImportGpkgUseCase(
             for (layer in layers) {
                 reader.readFeatures(layer) { batch ->
                     val entities = batch.map { f ->
-                        val rawCode = extractCodeFromMetadata(f.metadataJson) ?: f.featureSourceId
-                        val normCode = rawCode?.let { normalize(it) }
+                        val (rawCode, searchContent) = extractIdentifiers(f.metadataJson, f.sourceLayer, f.featureSourceId)
+                        val normCode = normalize(rawCode)
                         
                         GisFeatureEntity(
                             packageId = packageId,
@@ -68,9 +69,10 @@ class ImportGpkgUseCase(
                             featureSourceId = f.featureSourceId,
                             codeRaw = rawCode,
                             codeNorm = normCode,
+                            searchContent = searchContent,
                             geometryType = f.geometryType,
-                            centroidLat = f.bbox?.let { (it.minLat + it.maxLat) / 2 },
-                            centroidLon = f.bbox?.let { (it.minLon + it.maxLon) / 2 },
+                            centroidLat = f.bbox?.centroidLat,
+                            centroidLon = f.bbox?.centroidLon,
                             minLat = f.bbox?.minLat,
                             minLon = f.bbox?.minLon,
                             maxLat = f.bbox?.maxLat,
@@ -97,23 +99,62 @@ class ImportGpkgUseCase(
             .replace(Regex("[^a-z0-9]"), "")
     }
 
-    private fun extractCodeFromMetadata(json: String): String? {
-        return try {
-            val obj = org.json.JSONObject(json)
-            val codeKeys = listOf("codigo", "code", "id", "nome", "name", "identificador")
+    private fun extractIdentifiers(json: String, layerName: String, featureId: String?): Pair<String, String> {
+        val priorityKeys = listOf(
+            "numero_operativo",
+            "name",
+            "nome",
+            "codigo_do_",
+            "codigo",
+            "cod_id",
+            "sigla_da_s",
+            "circuito",
+            "circuit_id",
+            "circuit_2",
+            "circuit_1",
+            "id",
+            "spec_name",
+            "alias",
+            "tipo_de_es"
+        )
+
+        var primaryCode: String? = null
+        val searchTokens = mutableListOf<String>()
+        searchTokens.add(layerName)
+        if (featureId != null) searchTokens.add(featureId)
+
+        try {
+            val obj = JSONObject(json)
             val keys = obj.keys()
-            
-            var bestValue: String? = null
-            while (keys.hasNext()) {
-                val k = keys.next()
-                if (codeKeys.any { k.lowercase().contains(it) }) {
-                    bestValue = obj.optString(k)
-                    break
+            val keyList = mutableListOf<String>()
+            while (keys.hasNext()) keyList.add(keys.next())
+
+            // 1. Determine primary code by priority key match
+            for (pKey in priorityKeys) {
+                val matchingKey = keyList.firstOrNull { 
+                    val k = it.lowercase()
+                    k == pKey || k.startsWith(pKey) || k.contains(pKey)
+                }
+                if (matchingKey != null) {
+                    val value = obj.optString(matchingKey).trim()
+                    if (value.isNotBlank() && value != "null" && value != "None") {
+                        primaryCode = value
+                        break
+                    }
                 }
             }
-            bestValue?.takeIf { it.isNotBlank() }
-        } catch (e: Exception) {
-            null
-        }
+
+            // 2. Aggregate all attribute values for 100% full-text coverage
+            for (k in keyList) {
+                val v = obj.optString(k).trim()
+                if (v.isNotBlank() && v != "null" && v != "None" && v.length < 120) {
+                    searchTokens.add(v)
+                }
+            }
+        } catch (_: Exception) {}
+
+        val rawCode = primaryCode ?: featureId ?: "Elemento"
+        val searchContent = searchTokens.joinToString(" ") { normalize(it) }
+        return Pair(rawCode, searchContent)
     }
 }

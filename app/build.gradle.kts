@@ -82,6 +82,7 @@ dependencies {
     implementation("androidx.camera:camera-effects:1.4.1")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
+    implementation("org.osmdroid:osmdroid-android:6.1.18")
     implementation("com.caverock:androidsvg-aar:1.4")
     implementation("androidx.media3:media3-exoplayer:1.2.1")
     implementation("androidx.media3:media3-ui:1.2.1")

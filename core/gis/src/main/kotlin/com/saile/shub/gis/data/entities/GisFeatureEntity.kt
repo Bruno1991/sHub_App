@@ -18,7 +18,9 @@ import androidx.room.PrimaryKey
     ],
     indices = [
         Index(value = ["code_norm"], name = "idx_gis_features_code_norm"),
+        Index(value = ["search_content"], name = "idx_gis_features_search_content"),
         Index(value = ["source_layer"], name = "idx_gis_features_layer"),
+        Index(value = ["centroid_lat", "centroid_lon"], name = "idx_gis_features_centroid"),
         Index(value = ["min_lat", "min_lon", "max_lat", "max_lon"], name = "idx_gis_features_bbox")
     ]
 )
@@ -29,6 +31,7 @@ data class GisFeatureEntity(
     @ColumnInfo(name = "feature_source_id") val featureSourceId: String?,
     @ColumnInfo(name = "code_raw") val codeRaw: String?,
     @ColumnInfo(name = "code_norm") val codeNorm: String?,
+    @ColumnInfo(name = "search_content") val searchContent: String? = null,
     @ColumnInfo(name = "geometry_type") val geometryType: String?,
     @ColumnInfo(name = "centroid_lat") val centroidLat: Double?,
     @ColumnInfo(name = "centroid_lon") val centroidLon: Double?,
