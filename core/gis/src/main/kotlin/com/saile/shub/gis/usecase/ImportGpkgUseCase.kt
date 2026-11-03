@@ -7,9 +7,10 @@ import com.saile.shub.gis.data.entities.ImportedPackageEntity
 import com.saile.shub.gis.domain.GpkgReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.time.Instant
 
@@ -23,10 +24,10 @@ class ImportGpkgUseCase(
     private val context: Context,
     private val gisDao: GisDao
 ) {
-    fun execute(uri: Uri, displayName: String): Flow<ImportProgress> = flow {
-        emit(ImportProgress.CopyingFile)
+    fun execute(uri: Uri, displayName: String): Flow<ImportProgress> = channelFlow {
+        send(ImportProgress.CopyingFile)
 
-        // 1. Copy file to internal app storage for permanent fast access
+        // 1. Copy file to internal app storage using kernel DMA zero-copy transfer
         val gpkgDir = File(context.filesDir, "gpkg")
         if (!gpkgDir.exists()) gpkgDir.mkdirs()
 
@@ -34,13 +35,32 @@ class ImportGpkgUseCase(
         val fileName = "${System.currentTimeMillis()}_$safeName"
         val destFile = File(gpkgDir, fileName)
 
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            FileOutputStream(destFile).use { output ->
-                input.copyTo(output, bufferSize = 64 * 1024)
-            }
-        } ?: throw Exception("Não foi possível ler o arquivo selecionado.")
+        val transferredSuccessfully = runCatching {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                FileInputStream(pfd.fileDescriptor).channel.use { inChannel ->
+                    FileOutputStream(destFile).channel.use { outChannel ->
+                        var transferred: Long = 0
+                        val size = inChannel.size()
+                        while (transferred < size) {
+                            val count = outChannel.transferFrom(inChannel, transferred, size - transferred)
+                            if (count <= 0) break
+                            transferred += count
+                        }
+                        true
+                    }
+                }
+            } ?: false
+        }.getOrDefault(false)
 
-        emit(ImportProgress.Indexing(0))
+        if (!transferredSuccessfully) {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(destFile).use { output ->
+                    input.copyTo(output, bufferSize = 128 * 1024)
+                }
+            } ?: throw Exception("Não foi possível ler o arquivo selecionado.")
+        }
+
+        send(ImportProgress.Indexing(0))
 
         // 2. Perform direct in-place indexing on SQLite GeoPackage
         var totalFeatures = 0
@@ -49,14 +69,11 @@ class ImportGpkgUseCase(
 
             reader.createSearchIndexes { _, layerIdx, totalLayers ->
                 val progressCount = ((layerIdx.toDouble() / totalLayers) * totalFeatures).toInt()
-                // Emit incremental indexing progress
-                kotlinx.coroutines.runBlocking {
-                    // Handled within flow
-                }
+                trySend(ImportProgress.Indexing(progressCount))
             }
         }
 
-        emit(ImportProgress.Indexing(totalFeatures))
+        send(ImportProgress.Indexing(totalFeatures))
 
         // 3. Register package in Room metadata
         val pkgEntity = ImportedPackageEntity(
@@ -68,6 +85,6 @@ class ImportGpkgUseCase(
         )
         val packageId = gisDao.insertPackage(pkgEntity)
 
-        emit(ImportProgress.Completed(packageId, totalFeatures))
+        send(ImportProgress.Completed(packageId, totalFeatures))
     }.flowOn(Dispatchers.IO)
 }

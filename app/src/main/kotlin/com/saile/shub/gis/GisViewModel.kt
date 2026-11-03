@@ -7,17 +7,22 @@ import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import com.saile.shub.gis.data.AppDatabase
 import com.saile.shub.gis.data.entities.GisFeatureEntity
+import com.saile.shub.gis.data.entities.ImportedPackageEntity
+import com.saile.shub.gis.domain.GpkgReader
 import com.saile.shub.gis.usecase.GisSearchResult
 import com.saile.shub.gis.usecase.ImportGpkgUseCase
 import com.saile.shub.gis.usecase.ImportProgress
 import com.saile.shub.gis.usecase.SearchFeatureUseCase
 import com.saile.shub.gis.usecase.SearchItem
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.io.File
+import java.time.Instant
 
 sealed class GisState {
     object Idle : GisState()
@@ -58,26 +63,47 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     private var searchJob: Job? = null
 
     init {
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        viewModelScope.launch(Dispatchers.IO) {
+            // 1. Check if there is already a ready package with file present
             val active = db.gisDao().getActivePackage()
-            if (active == null) {
-                val gpkgDir = java.io.File(getApplication<Application>().filesDir, "gpkg")
-                val files = gpkgDir.listFiles { f -> f.extension.equals("gpkg", ignoreCase = true) }
-                val firstGpkg = files?.firstOrNull()
-                if (firstGpkg != null && firstGpkg.exists()) {
-                    runCatching {
-                        com.saile.shub.gis.domain.GpkgReader(firstGpkg.absolutePath).use { reader ->
-                            val totalFeatures = reader.countTotalFeatures()
-                            reader.createSearchIndexes()
-                            val pkg = com.saile.shub.gis.data.entities.ImportedPackageEntity(
-                                displayName = firstGpkg.name,
-                                fileUri = firstGpkg.absolutePath,
-                                importedAt = java.time.Instant.now().toString(),
-                                status = "ready",
-                                featureCount = totalFeatures
-                            )
-                            db.gisDao().insertPackage(pkg)
-                        }
+            if (active != null && File(active.fileUri).exists()) {
+                runCatching {
+                    GpkgReader(active.fileUri).use { it.createSearchIndexes() }
+                }
+                return@launch
+            }
+
+            // 2. Check if there are existing package records in Room whose file exists
+            val packages = db.gisDao().getAllPackages()
+            val existingPkg = packages.firstOrNull { File(it.fileUri).exists() }
+            if (existingPkg != null) {
+                runCatching {
+                    GpkgReader(existingPkg.fileUri).use { reader ->
+                        val count = reader.countTotalFeatures()
+                        reader.createSearchIndexes()
+                        db.gisDao().updatePackageStatus(existingPkg.id, "ready", count)
+                    }
+                }
+                return@launch
+            }
+
+            // 3. Auto-discover any .gpkg already present in files/gpkg/
+            val gpkgDir = File(getApplication<Application>().filesDir, "gpkg")
+            val files = gpkgDir.listFiles { f -> f.extension.equals("gpkg", ignoreCase = true) }
+            val firstGpkg = files?.maxByOrNull { it.length() }
+            if (firstGpkg != null && firstGpkg.exists()) {
+                runCatching {
+                    GpkgReader(firstGpkg.absolutePath).use { reader ->
+                        val totalFeatures = reader.countTotalFeatures()
+                        reader.createSearchIndexes()
+                        val pkg = ImportedPackageEntity(
+                            displayName = firstGpkg.name,
+                            fileUri = firstGpkg.absolutePath,
+                            importedAt = Instant.now().toString(),
+                            status = "ready",
+                            featureCount = totalFeatures
+                        )
+                        db.gisDao().insertPackage(pkg)
                     }
                 }
             }
