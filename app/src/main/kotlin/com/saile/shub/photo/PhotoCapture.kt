@@ -197,14 +197,20 @@ class PhotoCapture(private val executor: Executor) {
         context.contentResolver.openInputStream(uri)?.use { inputStream ->
             val originalBitmap = android.graphics.BitmapFactory.decodeStream(inputStream) ?: return
             val matrix = android.graphics.Matrix().apply { postScale(-1f, 1f) }
-            val flippedBitmap = android.graphics.Bitmap.createBitmap(
-                originalBitmap, 0, 0, originalBitmap.width, originalBitmap.height, matrix, true
-            )
-            originalBitmap.recycle()
-            context.contentResolver.openOutputStream(uri, "rwt")?.use { outputStream ->
-                flippedBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, outputStream)
+            val flippedBitmap = try {
+                android.graphics.Bitmap.createBitmap(
+                    originalBitmap, 0, 0, originalBitmap.width, originalBitmap.height, matrix, true
+                )
+            } finally {
+                originalBitmap.recycle()
             }
-            flippedBitmap.recycle()
+            try {
+                context.contentResolver.openOutputStream(uri, "rwt")?.use { outputStream ->
+                    flippedBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, outputStream)
+                }
+            } finally {
+                flippedBitmap.recycle()
+            }
         }
     }
 

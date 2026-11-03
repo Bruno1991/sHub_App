@@ -38,12 +38,12 @@ internal fun createCameraOverlayEffect(
             rotationDegrees = frame.rotationDegrees,
             willBeMirrored = frame.isMirroring || isFrontPhotoCapture,
         )
-        val (logicalWidth, logicalHeight) = transform.logicalSize(
-            width = canvas.width.toFloat(),
-            height = canvas.height.toFloat(),
-        )
+        val cWidth = canvas.width.toFloat()
+        val cHeight = canvas.height.toFloat()
+        val logicalWidth = transform.logicalWidth(cWidth, cHeight)
+        val logicalHeight = transform.logicalHeight(cWidth, cHeight)
 
-        transform.applyTo(canvas, canvas.width.toFloat(), canvas.height.toFloat())
+        transform.applyTo(canvas, cWidth, cHeight)
         OverlayRenderer.draw(
             context = context,
             canvas = canvas,

@@ -93,7 +93,13 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
 
     var zoomRatio by remember { mutableStateOf(0f) }
     var cameraControl by remember { mutableStateOf<CameraControl?>(null) }
-    var lastPhotoUri by remember { mutableStateOf(MediaUtils.getLastTakenMediaUri(context)) }
+    var lastPhotoUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    LaunchedEffect(Unit) {
+        val uri = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            MediaUtils.getLastTakenMediaUri(context)
+        }
+        lastPhotoUri = uri
+    }
     var resolvedAddress by remember { mutableStateOf<String?>(null) }
     
     var location by remember { mutableStateOf(LocationUtils.lastKnownLocation(context)) }

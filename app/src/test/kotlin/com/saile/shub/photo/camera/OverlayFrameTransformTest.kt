@@ -27,4 +27,24 @@ class OverlayFrameTransformTest {
 
         assertTrue(transform.willBeMirrored)
     }
+
+    @Test
+    fun `returns cached singleton instances without heap allocation`() {
+        val first = overlayFrameTransform(rotationDegrees = 90, willBeMirrored = true)
+        val second = overlayFrameTransform(rotationDegrees = 90, willBeMirrored = true)
+
+        // Verifies reference equality (same cached instance)
+        assertTrue(first === second)
+    }
+
+    @Test
+    fun `calculates logical width and height directly without allocating Pair`() {
+        val landscape = overlayFrameTransform(rotationDegrees = 90, willBeMirrored = false)
+        assertEquals(1080f, landscape.logicalWidth(1920f, 1080f), 0.001f)
+        assertEquals(1920f, landscape.logicalHeight(1920f, 1080f), 0.001f)
+
+        val portrait = overlayFrameTransform(rotationDegrees = 0, willBeMirrored = false)
+        assertEquals(1080f, portrait.logicalWidth(1080f, 1920f), 0.001f)
+        assertEquals(1920f, portrait.logicalHeight(1080f, 1920f), 0.001f)
+    }
 }

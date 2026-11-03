@@ -19,6 +19,12 @@ internal data class OverlayFrameTransform(
         }
     }
 
+    fun logicalWidth(width: Float, height: Float): Float =
+        if (rotationDegrees == 90 || rotationDegrees == 270) height else width
+
+    fun logicalHeight(width: Float, height: Float): Float =
+        if (rotationDegrees == 90 || rotationDegrees == 270) width else height
+
     fun logicalSize(width: Float, height: Float): Pair<Float, Float> =
         if (rotationDegrees == 90 || rotationDegrees == 270) height to width else width to height
 
@@ -43,14 +49,33 @@ internal data class OverlayFrameTransform(
             }
         }
         if (willBeMirrored) {
-            val (logicalWidth, _) = logicalSize(width, height)
-            canvas.translate(logicalWidth, 0f)
+            val logWidth = logicalWidth(width, height)
+            canvas.translate(logWidth, 0f)
             canvas.scale(-1f, 1f)
         }
+    }
+}
+
+private val cachedTransformInstances = Array(4) { rIdx ->
+    Array(2) { mIdx ->
+        OverlayFrameTransform(
+            rotationDegrees = rIdx * 90,
+            willBeMirrored = mIdx == 1,
+        )
     }
 }
 
 internal fun overlayFrameTransform(
     rotationDegrees: Int,
     willBeMirrored: Boolean,
-): OverlayFrameTransform = OverlayFrameTransform(rotationDegrees, willBeMirrored)
+): OverlayFrameTransform {
+    val rIdx = when (rotationDegrees) {
+        0 -> 0
+        90 -> 1
+        180 -> 2
+        270 -> 3
+        else -> throw IllegalArgumentException("Rotação CameraX inválida: $rotationDegrees")
+    }
+    val mIdx = if (willBeMirrored) 1 else 0
+    return cachedTransformInstances[rIdx][mIdx]
+}
