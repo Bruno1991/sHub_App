@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="shubGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4EB937" />
+      <stop offset="50%" stop-color="#36B24A" />
+      <stop offset="100%" stop-color="#19A963" />
+    </linearGradient>
+  </defs>
+  <!-- Full-bleed background with rounded corners or circle -->
+  <rect width="512" height="512" rx="115" fill="url(#shubGradient)" />
+  <!-- Stylized white S symbol -->
+  <path d="M 265 88 L 271 88 L 278 91 L 282 96 L 284 103 L 284 209 L 363 211 L 372 218 L 375 224 L 375 235 L 257 418 L 248 424 L 240 424 L 231 419 L 227 408 L 227 303 L 147 301 L 137 293 L 135 288 L 135 277 L 217 151 L 219 150 L 231 157 L 151 280 L 151 283 L 154 286 L 239 286 L 244 289 L 245 406 L 247 407 L 252 401 L 363 230 L 363 226 L 361 224 L 276 224 L 271 220 L 270 104 L 269 103 L 263 109 L 243 140 L 230 133 L 256 93 L 265 88 Z" fill="#FFFFFF" />
+</svg>
