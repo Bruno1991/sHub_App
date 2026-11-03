@@ -311,6 +311,181 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
         return results
     }
 
+    /**
+     * Queries visible vector features inside the map viewport bounding box.
+     * Applies scale-dependent visibility rules to render lines and points smoothly at 60 FPS.
+     */
+    fun getFeaturesInBoundingBox(
+        minLat: Double,
+        maxLat: Double,
+        minLon: Double,
+        maxLon: Double,
+        zoomLevel: Double,
+        maxPerLayer: Int = 300
+    ): List<GisRenderElement> {
+        val database = db ?: return emptyList()
+        val elements = mutableListOf<GisRenderElement>()
+
+        // 1. Determine which layers to render based on zoom level
+        val layersToRender = mutableListOf<Pair<String, GisElementType>>()
+        for (layer in getLayers()) {
+            val lower = layer.lowercase(Locale.ROOT)
+            val type = when {
+                lower.contains("subesta") -> GisElementType.SUBSTATION
+                lower.contains("torre") -> GisElementType.TOWER
+                lower.contains("vão at") || lower.contains("vao at") -> GisElementType.SPAN_AT
+                lower.contains("transformador") -> GisElementType.TRANSFORMER
+                lower.contains("chave") -> GisElementType.SWITCH
+                lower.contains("regulador") -> GisElementType.REGULATOR
+                lower.contains("capacitor") -> GisElementType.CAPACITOR
+                lower.contains("vão mt") || lower.contains("vao mt") -> GisElementType.SPAN_MT
+                lower.contains("vão bt") || lower.contains("vao bt") -> GisElementType.SPAN_BT
+                lower.contains("poste") -> GisElementType.POLE
+                else -> GisElementType.OTHER
+            }
+
+            // Zoom-based visibility filter
+            val shouldRender = when (type) {
+                GisElementType.SUBSTATION, GisElementType.TOWER, GisElementType.SPAN_AT -> true
+                GisElementType.TRANSFORMER, GisElementType.SWITCH, GisElementType.REGULATOR,
+                GisElementType.CAPACITOR, GisElementType.SPAN_MT -> zoomLevel >= 13.0
+                GisElementType.SPAN_BT -> zoomLevel >= 14.5
+                GisElementType.POLE -> zoomLevel >= 15.5
+                else -> zoomLevel >= 16.0
+            }
+
+            if (shouldRender) {
+                layersToRender.add(Pair(layer, type))
+            }
+        }
+
+        // 2. Query each layer using its spatial R-Tree index
+        val utmCorners = runCatching {
+            val sw = UtmConverter.geoToUtm(GeoCoordinate(minLat, minLon))
+            val ne = UtmConverter.geoToUtm(GeoCoordinate(maxLat, maxLon))
+            Pair(
+                minOf(sw.easting, ne.easting),
+                maxOf(sw.easting, ne.easting)
+            ) to Pair(
+                minOf(sw.northing, ne.northing),
+                maxOf(sw.northing, ne.northing)
+            )
+        }.getOrNull()
+
+        for ((layer, type) in layersToRender) {
+            val (geomCol, srsId) = getGeometryInfo(layer)
+            val rtreeName = "rtree_${layer}_${geomCol}"
+
+            var hasRtree = false
+            database.rawQuery("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", arrayOf(rtreeName)).use {
+                if (it.moveToFirst()) hasRtree = true
+            }
+            if (!hasRtree) continue
+
+            val (qMinX, qMaxX, qMinY, qMaxY) = if (srsId == 31980 || srsId in 31960..31985) {
+                if (utmCorners == null) continue
+                val (ePair, nPair) = utmCorners
+                listOf(ePair.first, ePair.second, nPair.first, nPair.second)
+            } else {
+                listOf(minLon, maxLon, minLat, maxLat)
+            }
+
+            val matchingFids = mutableListOf<Long>()
+            val rtreeSql = "SELECT id FROM \"$rtreeName\" WHERE minx <= ? AND maxx >= ? AND miny <= ? AND maxy >= ? LIMIT $maxPerLayer"
+            runCatching {
+                database.rawQuery(rtreeSql, arrayOf(qMaxX.toString(), qMinX.toString(), qMaxY.toString(), qMinY.toString())).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        matchingFids.add(cursor.getLong(0))
+                    }
+                }
+            }
+
+            if (matchingFids.isEmpty()) continue
+
+            val placeholders = matchingFids.joinToString(",") { "?" }
+            val fetchSql = "SELECT * FROM \"$layer\" WHERE fid IN ($placeholders)"
+            val args = matchingFids.map { it.toString() }.toTypedArray()
+
+            runCatching {
+                database.rawQuery(fetchSql, args).use { cursor ->
+                    val colNames = cursor.columnNames
+                    val geomIdx = colNames.indexOf(geomCol)
+                    val fidIdx = colNames.indexOfFirst { it.equals("fid", ignoreCase = true) || it.equals("id", ignoreCase = true) }
+
+                    while (cursor.moveToNext()) {
+                        val fid = if (fidIdx >= 0) cursor.getLong(fidIdx) else cursor.position.toLong()
+                        if (geomIdx < 0 || cursor.isNull(geomIdx)) continue
+                        val geomBlob = cursor.getBlob(geomIdx)
+
+                        val parsedGeom = GeometryHeaderParser.parseGeometry(geomBlob) ?: continue
+
+                        var title: String? = null
+                        val props = JSONObject()
+                        for (i in 0 until cursor.columnCount) {
+                            if (i != geomIdx) {
+                                val cName = colNames[i]
+                                val v = cursor.getString(i)
+                                if (!v.isNullOrBlank() && v != "null") {
+                                    props.put(cName, v)
+                                    val cl = cName.lowercase(Locale.ROOT)
+                                    if (title == null && (cl.contains("nome") || cl.contains("name") || cl.contains("numero") || cl.contains("codigo") || cl.contains("sigla") || cl.contains("circuito"))) {
+                                        title = v
+                                    }
+                                }
+                            }
+                        }
+                        val finalTitle = title ?: "$layer #$fid"
+                        val metaJson = props.toString()
+
+                        when (parsedGeom) {
+                            is ParsedGeometry.Point -> {
+                                elements.add(
+                                    GisRenderElement.Point(
+                                        fid = fid,
+                                        layerName = layer,
+                                        title = finalTitle,
+                                        type = type,
+                                        metadataJson = metaJson,
+                                        latitude = parsedGeom.lat,
+                                        longitude = parsedGeom.lon
+                                    )
+                                )
+                            }
+                            is ParsedGeometry.Line -> {
+                                elements.add(
+                                    GisRenderElement.Line(
+                                        fid = fid,
+                                        layerName = layer,
+                                        title = finalTitle,
+                                        type = type,
+                                        metadataJson = metaJson,
+                                        points = parsedGeom.points
+                                    )
+                                )
+                            }
+                            is ParsedGeometry.MultiLine -> {
+                                for (linePts in parsedGeom.lines) {
+                                    elements.add(
+                                        GisRenderElement.Line(
+                                            fid = fid,
+                                            layerName = layer,
+                                            title = finalTitle,
+                                            type = type,
+                                            metadataJson = metaJson,
+                                            points = linePts
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return elements
+    }
+
     private fun parseCursorFeatures(
         cursor: android.database.Cursor,
         layerName: String,

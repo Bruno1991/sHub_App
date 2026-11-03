@@ -74,9 +74,19 @@ fun GisScreen(
     val state by viewModel.state.collectAsState()
     val isSatelliteMode by viewModel.isSatelliteMode.collectAsState()
     val selectedTarget by viewModel.selectedTarget.collectAsState()
+    val visibleElements by viewModel.visibleElements.collectAsState()
+    val offlineMbtilesPath by viewModel.offlineMbtilesPath.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var isSearchFocused by remember { mutableStateOf(false) }
+
+    val vectorOverlay = remember {
+        GisVectorOverlay(
+            onElementTapped = { elem ->
+                viewModel.selectRenderElement(elem)
+            }
+        )
+    }
 
     // Initialize osmdroid configuration
     LaunchedEffect(Unit) {
@@ -86,6 +96,12 @@ fun GisScreen(
 
     // Keep reference to MapView for camera animations
     var mapViewRef by remember { mutableStateOf<MapView?>(null) }
+
+    // React to visibleElements changes by updating vector overlay
+    LaunchedEffect(visibleElements) {
+        vectorOverlay.updateElements(visibleElements)
+        mapViewRef?.invalidate()
+    }
 
     // React to selected target changes by animating map view
     LaunchedEffect(selectedTarget) {
@@ -152,6 +168,27 @@ fun GisScreen(
                     controller.setZoom(9.0)
                     // Center on Rondonia default
                     controller.setCenter(GeoPoint(-10.83, -61.95))
+                    overlays.add(vectorOverlay)
+                    addMapListener(object : org.osmdroid.events.MapListener {
+                        override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
+                            triggerViewport()
+                            return false
+                        }
+                        override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
+                            triggerViewport()
+                            return false
+                        }
+                        private fun triggerViewport() {
+                            val bbox = boundingBox ?: return
+                            viewModel.onViewportChanged(
+                                minLat = bbox.latSouth,
+                                maxLat = bbox.latNorth,
+                                minLon = bbox.lonWest,
+                                maxLon = bbox.lonEast,
+                                zoom = zoomLevelDouble
+                            )
+                        }
+                    })
                     mapViewRef = this
                 }
             },
@@ -293,6 +330,36 @@ fun GisScreen(
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            // Dynamic Active Assets Counter Pill
+            AnimatedVisibility(
+                visible = visibleElements.isNotEmpty() && !isSearchFocused,
+                modifier = Modifier.padding(top = 6.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                    shadowElevation = 3.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF10B981))
+                        )
+                        Text(
+                            text = "${visibleElements.size} ativos elétricos na tela",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
                     }
                 }
             }

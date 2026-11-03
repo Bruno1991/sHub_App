@@ -8,6 +8,8 @@ import androidx.room.Room
 import com.saile.shub.gis.data.AppDatabase
 import com.saile.shub.gis.data.entities.GisFeatureEntity
 import com.saile.shub.gis.data.entities.ImportedPackageEntity
+import com.saile.shub.gis.domain.GisElementType
+import com.saile.shub.gis.domain.GisRenderElement
 import com.saile.shub.gis.domain.GpkgReader
 import com.saile.shub.gis.usecase.GisSearchResult
 import com.saile.shub.gis.usecase.ImportGpkgUseCase
@@ -60,7 +62,14 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedTarget = MutableStateFlow<MapTarget?>(null)
     val selectedTarget: StateFlow<MapTarget?> = _selectedTarget.asStateFlow()
 
+    private val _visibleElements = MutableStateFlow<List<GisRenderElement>>(emptyList())
+    val visibleElements: StateFlow<List<GisRenderElement>> = _visibleElements.asStateFlow()
+
+    private val _offlineMbtilesPath = MutableStateFlow<String?>(null)
+    val offlineMbtilesPath: StateFlow<String?> = _offlineMbtilesPath.asStateFlow()
+
     private var searchJob: Job? = null
+    private var viewportJob: Job? = null
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -70,6 +79,7 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                 runCatching {
                     GpkgReader(active.fileUri).use { it.createSearchIndexes() }
                 }
+                checkForOfflineMbtiles()
                 return@launch
             }
 
@@ -84,6 +94,7 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                         db.gisDao().updatePackageStatus(existingPkg.id, "ready", count)
                     }
                 }
+                checkForOfflineMbtiles()
                 return@launch
             }
 
@@ -107,7 +118,72 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
+
+            checkForOfflineMbtiles()
         }
+    }
+
+    private fun checkForOfflineMbtiles() {
+        val downloadDir = File("/sdcard/Download")
+        val downloadMbtiles = downloadDir.listFiles { f -> f.extension.equals("mbtiles", ignoreCase = true) }?.firstOrNull()
+        if (downloadMbtiles != null && downloadMbtiles.exists()) {
+            _offlineMbtilesPath.value = downloadMbtiles.absolutePath
+            return
+        }
+
+        val appDir = File(getApplication<Application>().filesDir, "mbtiles")
+        val appMbtiles = appDir.listFiles { f -> f.extension.equals("mbtiles", ignoreCase = true) }?.firstOrNull()
+        if (appMbtiles != null && appMbtiles.exists()) {
+            _offlineMbtilesPath.value = appMbtiles.absolutePath
+        }
+    }
+
+    fun onViewportChanged(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, zoom: Double) {
+        viewportJob?.cancel()
+        if (zoom < 12.0) {
+            _visibleElements.value = emptyList()
+            return
+        }
+        viewportJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(150)
+            val active = db.gisDao().getActivePackage()
+            val reader = active?.let { SearchFeatureUseCase.getReader(it.fileUri) }
+            val elements = reader?.getFeaturesInBoundingBox(minLat, maxLat, minLon, maxLon, zoom)
+            _visibleElements.value = elements ?: emptyList()
+        }
+    }
+
+    fun selectRenderElement(element: GisRenderElement) {
+        val (lat, lon) = when (element) {
+            is GisRenderElement.Point -> Pair(element.latitude, element.longitude)
+            is GisRenderElement.Line -> element.points.firstOrNull() ?: return
+        }
+
+        val entity = GisFeatureEntity(
+            id = element.fid,
+            packageId = 1L,
+            sourceLayer = element.layerName,
+            featureSourceId = element.fid.toString(),
+            codeRaw = element.title,
+            codeNorm = element.title.lowercase(),
+            geometryType = if (element is GisRenderElement.Point) "Point" else "LineString",
+            centroidLat = lat,
+            centroidLon = lon,
+            minLat = lat,
+            minLon = lon,
+            maxLat = lat,
+            maxLon = lon,
+            metadataJson = element.metadataJson
+        )
+
+        _selectedTarget.value = MapTarget(
+            latitude = lat,
+            longitude = lon,
+            title = element.title,
+            subtitle = element.layerName,
+            zoomLevel = 18.5,
+            feature = entity
+        )
     }
 
     fun toggleSatelliteMode() {

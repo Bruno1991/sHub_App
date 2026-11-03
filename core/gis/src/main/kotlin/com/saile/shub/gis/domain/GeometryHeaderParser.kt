@@ -17,6 +17,12 @@ data class BoundingBox(
     val centroidLon: Double get() = (minLon + maxLon) / 2.0
 }
 
+sealed class ParsedGeometry {
+    data class Point(val lat: Double, val lon: Double) : ParsedGeometry()
+    data class Line(val points: List<Pair<Double, Double>>) : ParsedGeometry() // (lat, lon)
+    data class MultiLine(val lines: List<List<Pair<Double, Double>>>) : ParsedGeometry()
+}
+
 object GeometryHeaderParser {
 
     fun parseBoundingBox(blob: ByteArray): BoundingBox? {
@@ -24,7 +30,6 @@ object GeometryHeaderParser {
 
         val magic0 = blob[0]
         val magic1 = blob[1]
-        // "GP" ASCII = 0x47, 0x50
         if (magic0 != 0x47.toByte() || magic1 != 0x50.toByte()) {
             return null
         }
@@ -37,7 +42,6 @@ object GeometryHeaderParser {
         val endianness = flags and 0b1
         val headerByteOrder = if (endianness == 1) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN
 
-        // Read 32-bit SRS_ID at offset 4
         val srsIdBuffer = ByteBuffer.wrap(blob, 4, 4).order(headerByteOrder)
         val srsId = srsIdBuffer.int
 
@@ -47,7 +51,6 @@ object GeometryHeaderParser {
         var rawMaxY: Double? = null
 
         if (envelopeIndicator in 1..4) {
-            // Envelope starts at byte 8; need at least 32 bytes for 4 doubles
             if (blob.size >= 8 + 32) {
                 val envBuffer = ByteBuffer.wrap(blob, 8, 32).order(headerByteOrder)
                 rawMinX = envBuffer.double
@@ -56,13 +59,11 @@ object GeometryHeaderParser {
                 rawMaxY = envBuffer.double
             }
         } else if (envelopeIndicator == 0) {
-            // No envelope header: parse WKB starting at byte 8
             if (blob.size >= 8 + 21) {
                 val wkbEndianByte = blob[8].toInt()
                 val wkbByteOrder = if (wkbEndianByte == 1) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN
                 val wkbBuffer = ByteBuffer.wrap(blob, 9, blob.size - 9).order(wkbByteOrder)
                 val geomType = wkbBuffer.int
-                // 1 = Point, 1001 = PointZ, 2001 = PointM, 3001 = PointZM
                 if (geomType == 1 || geomType == 1001 || geomType == 2001 || geomType == 3001) {
                     val x = wkbBuffer.double
                     val y = wkbBuffer.double
@@ -78,28 +79,17 @@ object GeometryHeaderParser {
             return null
         }
 
-        // Coordinate transformation if coordinates are UTM (e.g. EPSG:31980 / SIRGAS 2000 UTM Zone 20S)
         return if (srsId == 31980 || (rawMinX > 100_000.0 && rawMinY > 1_000_000.0)) {
             val zone = if (srsId in 31960..31985) srsId - 31960 else 20
             val p1 = runCatching {
                 UtmConverter.utmToGeo(
-                    UtmCoordinate(
-                        zone = zone,
-                        hemisphere = Hemisphere.SOUTH,
-                        easting = rawMinX,
-                        northing = rawMinY
-                    )
+                    UtmCoordinate(zone = zone, hemisphere = Hemisphere.SOUTH, easting = rawMinX, northing = rawMinY)
                 )
             }.getOrNull()
 
             val p2 = runCatching {
                 UtmConverter.utmToGeo(
-                    UtmCoordinate(
-                        zone = zone,
-                        hemisphere = Hemisphere.SOUTH,
-                        easting = rawMaxX,
-                        northing = rawMaxY
-                    )
+                    UtmCoordinate(zone = zone, hemisphere = Hemisphere.SOUTH, easting = rawMaxX, northing = rawMaxY)
                 )
             }.getOrNull()
 
@@ -116,13 +106,103 @@ object GeometryHeaderParser {
                 null
             }
         } else {
-            // Already Geographic (Lon/Lat)
-            BoundingBox(
-                minLon = rawMinX,
-                maxLon = rawMaxX,
-                minLat = rawMinY,
-                maxLat = rawMaxY
-            )
+            BoundingBox(minLon = rawMinX, maxLon = rawMaxX, minLat = rawMinY, maxLat = rawMaxY)
+        }
+    }
+
+    fun parseGeometry(blob: ByteArray): ParsedGeometry? {
+        if (blob.size < 8) return null
+        if (blob[0] != 0x47.toByte() || blob[1] != 0x50.toByte()) return null
+
+        val flags = blob[3].toInt()
+        if ((flags and 0b00010000) != 0) return null
+
+        val envelopeIndicator = (flags shr 1) and 0b111
+        val endianness = flags and 0b1
+        val headerByteOrder = if (endianness == 1) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN
+
+        val srsId = ByteBuffer.wrap(blob, 4, 4).order(headerByteOrder).int
+
+        val envLen = when (envelopeIndicator) {
+            1 -> 32
+            2, 3 -> 48
+            4 -> 64
+            else -> 0
+        }
+
+        val wkbOffset = 8 + envLen
+        if (blob.size < wkbOffset + 5) return null
+
+        val wkbEndian = blob[wkbOffset].toInt()
+        val wkbByteOrder = if (wkbEndian == 1) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN
+
+        val buffer = ByteBuffer.wrap(blob, wkbOffset + 1, blob.size - (wkbOffset + 1)).order(wkbByteOrder)
+        val geomType = buffer.int
+
+        fun toLatLon(x: Double, y: Double): Pair<Double, Double>? {
+            return if (srsId == 31980 || (x > 100_000.0 && y > 1_000_000.0)) {
+                val zone = if (srsId in 31960..31985) srsId - 31960 else 20
+                runCatching {
+                    val p = UtmConverter.utmToGeo(
+                        UtmCoordinate(zone = zone, hemisphere = Hemisphere.SOUTH, easting = x, northing = y)
+                    )
+                    Pair(p.latitude, p.longitude)
+                }.getOrNull()
+            } else {
+                Pair(y, x) // y=lat, x=lon
+            }
+        }
+
+        return when (geomType) {
+            1, 1001, 2001, 3001 -> {
+                val x = buffer.double
+                val y = buffer.double
+                val pt = toLatLon(x, y) ?: return null
+                ParsedGeometry.Point(pt.first, pt.second)
+            }
+            2, 1002, 2002, 3002 -> {
+                val numPts = buffer.int
+                val hasZ = geomType == 1002 || geomType == 3002
+                val hasM = geomType == 2002 || geomType == 3002
+                val pts = mutableListOf<Pair<Double, Double>>()
+                for (i in 0 until numPts) {
+                    val x = buffer.double
+                    val y = buffer.double
+                    if (hasZ) buffer.double
+                    if (hasM) buffer.double
+                    toLatLon(x, y)?.let { pts.add(it) }
+                }
+                ParsedGeometry.Line(pts)
+            }
+            5, 1005, 2005, 3005 -> {
+                val numLines = buffer.int
+                val lines = mutableListOf<List<Pair<Double, Double>>>()
+                for (l in 0 until numLines) {
+                    if (buffer.remaining() < 9) break
+                    val lineEndianByte = buffer.get().toInt()
+                    val lineOrder = if (lineEndianByte == 1) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN
+                    val lineBuffer = buffer.order(lineOrder)
+                    val lineType = lineBuffer.int
+                    val numPts = lineBuffer.int
+                    val hasZ = lineType == 1002 || lineType == 3002
+                    val hasM = lineType == 2002 || lineType == 3002
+                    val pts = mutableListOf<Pair<Double, Double>>()
+                    for (i in 0 until numPts) {
+                        if (lineBuffer.remaining() < 16) break
+                        val x = lineBuffer.double
+                        val y = lineBuffer.double
+                        if (hasZ && lineBuffer.remaining() >= 8) lineBuffer.double
+                        if (hasM && lineBuffer.remaining() >= 8) lineBuffer.double
+                        toLatLon(x, y)?.let { pts.add(it) }
+                    }
+                    if (pts.isNotEmpty()) lines.add(pts)
+                }
+                ParsedGeometry.MultiLine(lines)
+            }
+            else -> {
+                val bbox = parseBoundingBox(blob) ?: return null
+                ParsedGeometry.Point(bbox.centroidLat, bbox.centroidLon)
+            }
         }
     }
 }

@@ -65,4 +65,62 @@ class GeometryHeaderParserTest {
         assertTrue(bbox.centroidLat < -10.0 && bbox.centroidLat > -13.0, "Latitude should be ~ -11.14")
         assertTrue(bbox.centroidLon < -59.0 && bbox.centroidLon > -63.0, "Longitude should be ~ -60.36")
     }
+
+    @Test
+    fun testParseGeometryPointWgs84() {
+        val buffer = ByteBuffer.allocate(29)
+        buffer.order(ByteOrder.LITTLE_ENDIAN)
+
+        buffer.put(0x47.toByte())
+        buffer.put(0x50.toByte())
+        buffer.put(0.toByte())
+        buffer.put(1.toByte())
+        buffer.putInt(4326)
+
+        buffer.put(1.toByte())
+        buffer.putInt(1)
+        buffer.putDouble(-62.366) // X (lon)
+        buffer.putDouble(-11.127) // Y (lat)
+
+        val geom = GeometryHeaderParser.parseGeometry(buffer.array())
+        assertNotNull(geom)
+        assertTrue(geom is ParsedGeometry.Point)
+        assertEquals(-11.127, (geom as ParsedGeometry.Point).lat, 0.001)
+        assertEquals(-62.366, geom.lon, 0.001)
+    }
+
+    @Test
+    fun testParseGeometryLineStringGeographic() {
+        // 8 header + 32 env + 1 wkb endian + 4 geom type + 4 num pts + 32 pts = 81 bytes
+        val buffer = ByteBuffer.allocate(81)
+        buffer.order(ByteOrder.LITTLE_ENDIAN)
+
+        buffer.put(0x47.toByte())
+        buffer.put(0x50.toByte())
+        buffer.put(0.toByte())
+        buffer.put(3.toByte()) // envelope 1
+        buffer.putInt(4674)
+
+        // 32 bytes env
+        buffer.putDouble(-62.0)
+        buffer.putDouble(-61.9)
+        buffer.putDouble(-10.0)
+        buffer.putDouble(-9.9)
+
+        // WKB LineString
+        buffer.put(1.toByte())
+        buffer.putInt(2) // LineString
+        buffer.putInt(2) // 2 points
+        buffer.putDouble(-62.0) // pt1 lon
+        buffer.putDouble(-10.0) // pt1 lat
+        buffer.putDouble(-61.9) // pt2 lon
+        buffer.putDouble(-9.9)  // pt2 lat
+
+        val geom = GeometryHeaderParser.parseGeometry(buffer.array())
+        assertNotNull(geom)
+        assertTrue(geom is ParsedGeometry.Line)
+        assertEquals(2, (geom as ParsedGeometry.Line).points.size)
+        assertEquals(-10.0, geom.points[0].first, 0.001)
+        assertEquals(-62.0, geom.points[0].second, 0.001)
+    }
 }
