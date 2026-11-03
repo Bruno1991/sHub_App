@@ -59,6 +59,12 @@ interface GisDao {
     @Query("SELECT * FROM imported_packages ORDER BY imported_at DESC")
     suspend fun getAllPackages(): List<ImportedPackageEntity>
 
+    @Query("SELECT * FROM imported_packages WHERE status = 'ready' ORDER BY id DESC LIMIT 1")
+    suspend fun getActivePackage(): ImportedPackageEntity?
+
+    @Query("SELECT * FROM imported_packages WHERE id = :packageId LIMIT 1")
+    suspend fun getPackageById(packageId: Long): ImportedPackageEntity?
+
     @Query("SELECT COUNT(*) FROM gis_features WHERE package_id = :packageId")
     suspend fun getFeatureCountByPackage(packageId: Long): Int
 }

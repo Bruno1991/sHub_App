@@ -45,6 +45,8 @@ class SearchFeatureUseCaseTest {
         }
 
         override suspend fun getAllPackages(): List<ImportedPackageEntity> = emptyList()
+        override suspend fun getActivePackage(): ImportedPackageEntity? = null
+        override suspend fun getPackageById(packageId: Long): ImportedPackageEntity? = null
         override suspend fun getFeatureCountByPackage(packageId: Long): Int = features.size
     }
 

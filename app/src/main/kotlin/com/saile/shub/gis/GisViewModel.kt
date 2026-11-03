@@ -57,6 +57,33 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
 
     private var searchJob: Job? = null
 
+    init {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val active = db.gisDao().getActivePackage()
+            if (active == null) {
+                val gpkgDir = java.io.File(getApplication<Application>().filesDir, "gpkg")
+                val files = gpkgDir.listFiles { f -> f.extension.equals("gpkg", ignoreCase = true) }
+                val firstGpkg = files?.firstOrNull()
+                if (firstGpkg != null && firstGpkg.exists()) {
+                    runCatching {
+                        com.saile.shub.gis.domain.GpkgReader(firstGpkg.absolutePath).use { reader ->
+                            val totalFeatures = reader.countTotalFeatures()
+                            reader.createSearchIndexes()
+                            val pkg = com.saile.shub.gis.data.entities.ImportedPackageEntity(
+                                displayName = firstGpkg.name,
+                                fileUri = firstGpkg.absolutePath,
+                                importedAt = java.time.Instant.now().toString(),
+                                status = "ready",
+                                featureCount = totalFeatures
+                            )
+                            db.gisDao().insertPackage(pkg)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fun toggleSatelliteMode() {
         _isSatelliteMode.value = !_isSatelliteMode.value
     }
