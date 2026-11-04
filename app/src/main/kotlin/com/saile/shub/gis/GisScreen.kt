@@ -200,11 +200,12 @@ fun GisScreen(
     LaunchedEffect(datasetExtent, mapViewRef) {
         val extent = datasetExtent ?: return@LaunchedEffect
         val map = mapViewRef ?: return@LaunchedEffect
-        map.zoomToBoundingBox(
-            org.osmdroid.util.BoundingBox(extent.maxLat, extent.maxLon, extent.minLat, extent.minLon),
-            false,
-            50
-        )
+        val osmbounds = org.osmdroid.util.BoundingBox(extent.maxLat, extent.maxLon, extent.minLat, extent.minLon)
+        if (map.width > 0 && map.height > 0) {
+            map.zoomToBoundingBox(osmbounds, false, 50)
+        } else {
+            map.post { map.zoomToBoundingBox(osmbounds, false, 50) }
+        }
         kotlinx.coroutines.delay(200)
         val bbox = map.boundingBox
         if (bbox != null) {
@@ -229,11 +230,12 @@ fun GisScreen(
     LaunchedEffect(Unit) {
         viewModel.zoomToExtentEvent.collect { extent ->
             val map = mapViewRef ?: return@collect
-            map.zoomToBoundingBox(
-                org.osmdroid.util.BoundingBox(extent.maxLat, extent.maxLon, extent.minLat, extent.minLon),
-                true,
-                60
-            )
+            val osmbounds = org.osmdroid.util.BoundingBox(extent.maxLat, extent.maxLon, extent.minLat, extent.minLon)
+            if (map.width > 0 && map.height > 0) {
+                map.zoomToBoundingBox(osmbounds, true, 60)
+            } else {
+                map.post { map.zoomToBoundingBox(osmbounds, true, 60) }
+            }
             kotlinx.coroutines.delay(250)
             val bbox = map.boundingBox
             if (bbox != null) {

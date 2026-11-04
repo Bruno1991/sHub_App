@@ -14,12 +14,14 @@ import com.saile.shub.gis.domain.GisElementType
 import com.saile.shub.gis.domain.GisLayerSummary
 import com.saile.shub.gis.domain.GisRenderElement
 import com.saile.shub.gis.domain.GpkgReader
+import com.saile.shub.gis.domain.GpkgReaderProvider
 import com.saile.shub.gis.usecase.GisSearchResult
 import com.saile.shub.gis.usecase.ImportGpkgUseCase
 import com.saile.shub.gis.usecase.ImportProgress
 import com.saile.shub.gis.usecase.SearchFeatureUseCase
 import com.saile.shub.gis.usecase.SearchItem
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -30,6 +32,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 
 sealed class GisState {
     object Idle : GisState()
@@ -122,6 +125,11 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     private var searchJob: Job? = null
     private var viewportJob: Job? = null
     private var lastViewportParams: ViewportParams? = null
+    private val queryGeneration = AtomicLong(0)
+    private var layersInitialized = false
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val queryDispatcher = Dispatchers.IO.limitedParallelism(1)
 
     private data class ViewportParams(
         val minLat: Double,
@@ -140,15 +148,24 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadActiveDataset(autoZoom: Boolean = true) {
         viewModelScope.launch(Dispatchers.IO) {
-            val file = getActiveGpkgFile() ?: return@launch
+            val file = getActiveGpkgFile()
+            if (file == null) {
+                Log.w("ShubGis", "loadActiveDataset: No active GPKG file found")
+                return@launch
+            }
             runCatching {
-                val reader = SearchFeatureUseCase.getReader(file.absolutePath) ?: GpkgReader(file.absolutePath)
+                val reader = GpkgReaderProvider.getOrOpen(file.absolutePath)
+                if (reader == null) {
+                    Log.w("ShubGis", "loadActiveDataset: could not open reader for ${file.absolutePath}")
+                    return@launch
+                }
                 val extent = reader.getDatasetExtent()
                 val layers = reader.getLayerSummaries()
 
                 if (_enabledLayers.value.isEmpty()) {
                     _enabledLayers.value = layers.map { it.name }.toSet()
                 }
+                layersInitialized = true
 
                 _datasetExtent.value = extent
                 _availableLayers.value = layers.map {
@@ -164,10 +181,11 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 val params = lastViewportParams
+                val currentGen = queryGeneration.incrementAndGet()
                 if (params != null) {
-                    queryViewport(params.minLat, params.maxLat, params.minLon, params.maxLon, params.zoom)
+                    queryViewport(params.minLat, params.maxLat, params.minLon, params.maxLon, params.zoom, currentGen)
                 } else if (extent != null) {
-                    queryViewport(extent.minLat, extent.maxLat, extent.minLon, extent.maxLon, 9.0)
+                    queryViewport(extent.minLat, extent.maxLat, extent.minLon, extent.maxLon, 9.0, currentGen)
                 }
             }.onFailure {
                 Log.e("ShubGis", "Failed to load active dataset: ${it.message}", it)
@@ -180,8 +198,10 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         val files = gpkgDir.listFiles { f -> f.extension.equals("gpkg", ignoreCase = true) }
         val file = files?.maxByOrNull { it.length() }
         if (file != null && file.exists()) {
+            Log.i("ShubGis", "Active GPKG: ${file.absolutePath} (${file.length()} bytes)")
             return file
         }
+        Log.w("ShubGis", "Active GPKG: no .gpkg found in ${gpkgDir.absolutePath}")
         return null
     }
 
@@ -244,8 +264,9 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         lastViewportParams?.let {
-            viewModelScope.launch(Dispatchers.IO) {
-                queryViewport(it.minLat, it.maxLat, it.minLon, it.maxLon, it.zoom)
+            val currentGen = queryGeneration.incrementAndGet()
+            viewModelScope.launch(queryDispatcher) {
+                queryViewport(it.minLat, it.maxLat, it.minLon, it.maxLon, it.zoom, currentGen)
             }
         }
     }
@@ -284,28 +305,58 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
             _visibleElements.value = emptyList()
             return
         }
-        viewportJob = viewModelScope.launch(Dispatchers.IO) {
+        val currentGen = queryGeneration.incrementAndGet()
+        viewportJob = viewModelScope.launch(queryDispatcher) {
             if (!isFirst) {
                 delay(100)
             }
-            queryViewport(minLat, maxLat, minLon, maxLon, zoom)
+            queryViewport(minLat, maxLat, minLon, maxLon, zoom, currentGen)
         }
     }
 
-    private suspend fun queryViewport(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, zoom: Double) {
-        val file = getActiveGpkgFile() ?: return
-        val reader = SearchFeatureUseCase.getReader(file.absolutePath)
-        val elements = reader?.getFeaturesInBoundingBox(
+    private suspend fun queryViewport(
+        minLat: Double,
+        maxLat: Double,
+        minLon: Double,
+        maxLon: Double,
+        zoom: Double,
+        generation: Long = queryGeneration.get()
+    ) {
+        if (generation != queryGeneration.get()) return
+        val file = getActiveGpkgFile()
+        if (file == null) {
+            Log.w("ShubGis", "queryViewport: active GPKG file is null")
+            _state.value = GisState.Error("Nenhum arquivo GeoPackage ativo encontrado.")
+            _visibleElements.value = emptyList()
+            return
+        }
+        val reader = GpkgReaderProvider.getOrOpen(file.absolutePath)
+        if (reader == null) {
+            Log.w("ShubGis", "queryViewport: could not open reader for ${file.absolutePath}")
+            _state.value = GisState.Error("Não foi possível abrir o GeoPackage: ${file.name}")
+            _visibleElements.value = emptyList()
+            return
+        }
+
+        val activeEnabledLayers = if (layersInitialized) _enabledLayers.value else null
+        val elements = reader.getFeaturesInBoundingBox(
             minLat = minLat,
             maxLat = maxLat,
             minLon = minLon,
             maxLon = maxLon,
             zoomLevel = zoom,
-            enabledLayers = _enabledLayers.value
+            enabledLayers = activeEnabledLayers,
+            shouldContinue = { generation == queryGeneration.get() }
         )
-        val count = elements?.size ?: 0
-        Log.i("ShubGis", "queryViewport: bounds=[$minLat, $minLon to $maxLat, $maxLon], zoom=$zoom -> found $count elements")
-        _visibleElements.value = elements ?: emptyList()
+
+        if (generation != queryGeneration.get()) {
+            Log.i("ShubGis", "queryViewport: generation $generation discarded (current: ${queryGeneration.get()})")
+            return
+        }
+
+        val count = elements.size
+        Log.i("ShubGis", "queryViewport [gen=$generation]: bounds=[$minLat, $minLon to $maxLat, $maxLon], zoom=$zoom -> found $count elements")
+        _visibleElements.value = elements
     }
 
     fun selectRenderElement(element: GisRenderElement) {
@@ -348,6 +399,8 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                     _state.value = GisState.Importing(progress)
                     if (progress is ImportProgress.Completed) {
                         _state.value = GisState.Idle
+                        GpkgReaderProvider.closeAll()
+                        layersInitialized = false
                         loadActiveDataset(autoZoom = true)
                     }
                 }
@@ -417,7 +470,7 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             val file = getActiveGpkgFile() ?: return@launch
-            val reader = SearchFeatureUseCase.getReader(file.absolutePath) ?: return@launch
+            val reader = GpkgReaderProvider.getOrOpen(file.absolutePath) ?: return@launch
             val writer = reader.getWriter() ?: return@launch
 
             val cols = reader.getLayerColumns(layerName)
@@ -435,7 +488,8 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
             val newFid = writer.insertPointFeature(layerName, latitude, longitude, attrs)
             if (newFid > 0) {
                 lastViewportParams?.let {
-                    queryViewport(it.minLat, it.maxLat, it.minLon, it.maxLon, it.zoom)
+                    val gen = queryGeneration.incrementAndGet()
+                    queryViewport(it.minLat, it.maxLat, it.minLon, it.maxLon, it.zoom, gen)
                 }
             }
         }
@@ -444,13 +498,14 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     fun updateFeatureAttributes(layerName: String, fid: Long, attributes: Map<String, Any?>) {
         viewModelScope.launch(Dispatchers.IO) {
             val file = getActiveGpkgFile() ?: return@launch
-            val reader = SearchFeatureUseCase.getReader(file.absolutePath) ?: return@launch
+            val reader = GpkgReaderProvider.getOrOpen(file.absolutePath) ?: return@launch
             val writer = reader.getWriter() ?: return@launch
 
             val success = writer.updateFeatureAttributes(layerName, fid, attributes)
             if (success) {
                 lastViewportParams?.let {
-                    queryViewport(it.minLat, it.maxLat, it.minLon, it.maxLon, it.zoom)
+                    val gen = queryGeneration.incrementAndGet()
+                    queryViewport(it.minLat, it.maxLat, it.minLon, it.maxLon, it.zoom, gen)
                 }
             }
         }
@@ -459,18 +514,22 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteFeature(layerName: String, fid: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             val file = getActiveGpkgFile() ?: return@launch
-            val reader = SearchFeatureUseCase.getReader(file.absolutePath) ?: return@launch
+            val reader = GpkgReaderProvider.getOrOpen(file.absolutePath) ?: return@launch
             val writer = reader.getWriter() ?: return@launch
 
             val success = writer.deleteFeature(layerName, fid)
             if (success) {
                 clearSelection()
                 lastViewportParams?.let {
-                    queryViewport(it.minLat, it.maxLat, it.minLon, it.maxLon, it.zoom)
+                    val gen = queryGeneration.incrementAndGet()
+                    queryViewport(it.minLat, it.maxLat, it.minLon, it.maxLon, it.zoom, gen)
                 }
             }
         }
     }
 
-
+    override fun onCleared() {
+        super.onCleared()
+        GpkgReaderProvider.closeAll()
+    }
 }

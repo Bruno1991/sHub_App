@@ -46,6 +46,7 @@ data class GisLayerSummary(
     val name: String,
     val featureCount: Int,
     val colorHex: String,
-    val isVisible: Boolean = true
+    val isVisible: Boolean = true,
+    val hasRtree: Boolean = true
 )
 

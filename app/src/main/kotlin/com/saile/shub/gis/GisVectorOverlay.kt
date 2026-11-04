@@ -6,6 +6,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Point
 import android.graphics.Typeface
+import android.util.Log
 import android.view.MotionEvent
 import com.saile.shub.gis.domain.GisElementType
 import com.saile.shub.gis.domain.GisRenderElement
@@ -164,6 +165,11 @@ class GisVectorOverlay(
     private var currentZoom: Double = 9.0
     private var selectedFid: Long? = null
 
+    // Density and metrics cache
+    private var density = 1.0f
+    private var densityConfigured = false
+    private var lastDrawLogTime = 0L
+
     // Real-time GPS Location state
     private var userPosition: GisPositioningInfo? = null
     private var userHeadingDegrees: Float = 0f
@@ -174,6 +180,22 @@ class GisVectorOverlay(
     private val userPosPoint = Point()
     private val tempGeoPoint = GeoPoint(0.0, 0.0)
     private val headingPath = Path()
+
+    private fun ensureDensity(mapView: MapView) {
+        if (densityConfigured) return
+        density = mapView.context.resources.displayMetrics.density
+        linePaintAT.strokeWidth = 5.5f * density
+        linePaintMT.strokeWidth = 3.8f * density
+        linePaintBT.strokeWidth = 2.6f * density
+        darkBorderPaint.strokeWidth = 2f * density
+        whiteBorderPaint.strokeWidth = 2f * density
+        selectionRingPaint.strokeWidth = 4f * density
+        labelOutlinePaint.textSize = 14f * density
+        labelOutlinePaint.strokeWidth = 3.5f * density
+        labelTextPaint.textSize = 14f * density
+        userAccuracyStrokePaint.strokeWidth = 2f * density
+        densityConfigured = true
+    }
 
     fun updateElements(elements: List<GisRenderElement>, zoom: Double = currentZoom, selectedId: Long? = null) {
         currentElements = elements
@@ -194,8 +216,16 @@ class GisVectorOverlay(
         if (shadow) return
         val pj = mapView.projection ?: return
 
+        ensureDensity(mapView)
+        val zoomDouble = mapView.zoomLevelDouble
         val screenW = mapView.width.toFloat()
         val screenH = mapView.height.toFloat()
+
+        val now = System.currentTimeMillis()
+        if (now - lastDrawLogTime > 1000L) {
+            lastDrawLogTime = now
+            Log.i("ShubGis", "Overlay drawn: ${currentElements.size} elements, zoom=$zoomDouble")
+        }
 
         // 1. Draw Lines First (AT, MT, BT) with viewport clipping
         for (elem in currentElements) {
@@ -250,34 +280,38 @@ class GisVectorOverlay(
                     continue
                 }
 
-                val (paint, radius, isWhite) = when (elem.type) {
-                    GisElementType.SUBSTATION -> Triple(subPaint, 13f, false)
-                    GisElementType.TOWER -> Triple(towerPaint, 8.5f, true)
-                    GisElementType.TRANSFORMER -> Triple(trafoPaint, 7.5f, false)
-                    GisElementType.SWITCH -> Triple(switchPaint, 7f, false)
-                    GisElementType.REGULATOR -> Triple(regulatorPaint, 7f, false)
-                    GisElementType.CAPACITOR -> Triple(capacitorPaint, 7f, false)
-                    GisElementType.POLE -> Triple(polePaint, 4.5f, true)
-                    else -> Triple(polePaint, 4.5f, true)
+                val paint: Paint
+                val radius: Float
+                val isWhite: Boolean
+
+                when (elem.type) {
+                    GisElementType.SUBSTATION -> { paint = subPaint; radius = 13f * density; isWhite = false }
+                    GisElementType.TOWER -> { paint = towerPaint; radius = 8.5f * density; isWhite = true }
+                    GisElementType.TRANSFORMER -> { paint = trafoPaint; radius = 7.5f * density; isWhite = false }
+                    GisElementType.SWITCH -> { paint = switchPaint; radius = 7f * density; isWhite = false }
+                    GisElementType.REGULATOR -> { paint = regulatorPaint; radius = 7f * density; isWhite = false }
+                    GisElementType.CAPACITOR -> { paint = capacitorPaint; radius = 7f * density; isWhite = false }
+                    GisElementType.POLE -> { paint = polePaint; radius = 4.5f * density; isWhite = true }
+                    else -> { paint = polePaint; radius = 4.5f * density; isWhite = true }
                 }
 
                 // Outer border for contrast on satellite & vector maps
                 val border = if (isWhite) darkBorderPaint else whiteBorderPaint
-                canvas.drawCircle(cx, cy, radius + 1.5f, border)
+                canvas.drawCircle(cx, cy, radius + 1.5f * density, border)
                 canvas.drawCircle(cx, cy, radius, paint)
 
                 // Highlight ring if element is selected
                 if (elem.fid == selectedFid) {
-                    canvas.drawCircle(cx, cy, radius + 8f, selectionRingPaint)
+                    canvas.drawCircle(cx, cy, radius + 8f * density, selectionRingPaint)
                 }
 
                 // Text labels when zoomed in (zoom >= 15.0) like QField
-                if (currentZoom >= 15.0 && elem.type != GisElementType.POLE) {
+                if (zoomDouble >= 15.0 && elem.type != GisElementType.POLE) {
                     val label = elem.title
                     if (label.isNotBlank()) {
-                        val textY = cy - radius - 8f
-                        canvas.drawText(label, cx + 6f, textY, labelOutlinePaint)
-                        canvas.drawText(label, cx + 6f, textY, labelTextPaint)
+                        val textY = cy - radius - 8f * density
+                        canvas.drawText(label, cx + 6f * density, textY, labelOutlinePaint)
+                        canvas.drawText(label, cx + 6f * density, textY, labelTextPaint)
                     }
                 }
             }
@@ -305,7 +339,7 @@ class GisVectorOverlay(
                 val bearing = pos.bearingDegrees ?: (if (userHeadingDegrees > 0f) userHeadingDegrees else null)
                 if (bearing != null) {
                     val rad = Math.toRadians((bearing - 90.0).toDouble())
-                    val coneLength = 36f
+                    val coneLength = 36f * density
                     val coneSpread = Math.toRadians(25.0)
 
                     val x1 = ux + (coneLength * cos(rad - coneSpread)).toFloat()
@@ -323,11 +357,11 @@ class GisVectorOverlay(
                 }
 
                 // Outer white circle
-                canvas.drawCircle(ux, uy, 12f, userWhiteBorderPaint)
+                canvas.drawCircle(ux, uy, 12f * density, userWhiteBorderPaint)
                 // Inner vibrant blue dot
-                canvas.drawCircle(ux, uy, 8.5f, userBlueDotPaint)
+                canvas.drawCircle(ux, uy, 8.5f * density, userBlueDotPaint)
                 // White center core
-                canvas.drawCircle(ux, uy, 3.5f, userWhiteBorderPaint)
+                canvas.drawCircle(ux, uy, 3.5f * density, userWhiteBorderPaint)
             }
         }
     }

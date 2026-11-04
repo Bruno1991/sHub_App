@@ -3,6 +3,7 @@ package com.saile.shub.gis.domain
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -13,7 +14,7 @@ class GeometryHeaderParserTest {
     fun testParseBoundingBoxGeographic() {
         val buffer = ByteBuffer.allocate(40)
         buffer.order(ByteOrder.LITTLE_ENDIAN)
-        
+
         // Magic "GP"
         buffer.put(0x47.toByte())
         buffer.put(0x50.toByte())
@@ -28,10 +29,10 @@ class GeometryHeaderParserTest {
         buffer.putDouble(-50.0)
         buffer.putDouble(-20.0)
         buffer.putDouble(-10.0)
-        
+
         val blob = buffer.array()
         val bbox = GeometryHeaderParser.parseBoundingBox(blob)
-        
+
         assertNotNull(bbox)
         assertEquals(-60.0, bbox.minLon)
         assertEquals(-50.0, bbox.maxLon)
@@ -152,5 +153,75 @@ class GeometryHeaderParserTest {
         assertTrue(geom is ParsedGeometry.MultiLine)
         assertEquals(1, (geom as ParsedGeometry.MultiLine).lines.size)
         assertEquals(3, geom.lines[0].size)
+    }
+
+    @Test
+    fun testParseLineStringZUtm31980() {
+        // 8 header + 1 wkb endian + 4 type (1002) + 4 num pts (2) + 48 pts (X, Y, Z each 24 bytes) = 65 bytes
+        val buffer = ByteBuffer.allocate(65).order(ByteOrder.LITTLE_ENDIAN)
+        buffer.put(0x47.toByte())
+        buffer.put(0x50.toByte())
+        buffer.put(0.toByte())
+        buffer.put(1.toByte()) // envelope 0
+        buffer.putInt(31980)
+
+        buffer.put(1.toByte())
+        buffer.putInt(1002) // LineStringZ
+        buffer.putInt(2)
+        // pt 1
+        buffer.putDouble(569402.6)
+        buffer.putDouble(8767709.64)
+        buffer.putDouble(150.0) // Z
+        // pt 2
+        buffer.putDouble(569500.0)
+        buffer.putDouble(8767800.0)
+        buffer.putDouble(152.0) // Z
+
+        val geom = GeometryHeaderParser.parseGeometry(buffer.array())
+        assertNotNull(geom)
+        assertTrue(geom is ParsedGeometry.Line)
+        assertEquals(2, (geom as ParsedGeometry.Line).points.size)
+        assertTrue(geom.points[0].first < -10.0 && geom.points[0].first > -13.0)
+    }
+
+    @Test
+    fun testParseMultiPointGeographic() {
+        // 8 header + 1 wkb endian + 4 type (4) + 4 num pts (2) + 2*(1 endian + 4 type + 16 XY = 21) = 59 bytes
+        val buffer = ByteBuffer.allocate(59).order(ByteOrder.LITTLE_ENDIAN)
+        buffer.put(0x47.toByte())
+        buffer.put(0x50.toByte())
+        buffer.put(0.toByte())
+        buffer.put(1.toByte()) // envelope 0
+        buffer.putInt(4674)
+
+        buffer.put(1.toByte())
+        buffer.putInt(4) // MultiPoint
+        buffer.putInt(2) // 2 points
+
+        // Subpoint 1
+        buffer.put(1.toByte())
+        buffer.putInt(1)
+        buffer.putDouble(-62.1)
+        buffer.putDouble(-10.1)
+
+        // Subpoint 2
+        buffer.put(1.toByte())
+        buffer.putInt(1)
+        buffer.putDouble(-62.2)
+        buffer.putDouble(-10.2)
+
+        val geom = GeometryHeaderParser.parseGeometry(buffer.array())
+        assertNotNull(geom)
+        assertTrue(geom is ParsedGeometry.MultiPoint)
+        assertEquals(2, (geom as ParsedGeometry.MultiPoint).points.size)
+        assertEquals(-10.1, geom.points[0].first, 0.001)
+        assertEquals(-62.1, geom.points[0].second, 0.001)
+    }
+
+    @Test
+    fun testTruncatedBlobDoesNotThrow() {
+        val truncated = byteArrayOf(0x47, 0x50, 0, 1, 0, 0, 0x7C.toByte(), 0xFC.toByte(), 1, 1, 0, 0)
+        val geom = GeometryHeaderParser.parseGeometry(truncated)
+        assertNull(geom)
     }
 }

@@ -4,6 +4,7 @@ import com.saile.shub.gis.data.dao.GisDao
 import com.saile.shub.gis.data.entities.GisFeatureEntity
 import com.saile.shub.gis.domain.CoordinateSearchParser
 import com.saile.shub.gis.domain.GpkgReader
+import com.saile.shub.gis.domain.GpkgReaderProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -37,37 +38,12 @@ data class GisSearchResult(
 class SearchFeatureUseCase(private val gisDao: GisDao) {
 
     companion object {
-        @Volatile
-        private var cachedReader: GpkgReader? = null
-        private var cachedPath: String? = null
-        private val lock = Any()
-
         fun getReader(path: String): GpkgReader? {
-            synchronized(lock) {
-                if (cachedPath == path && cachedReader != null) {
-                    return cachedReader
-                }
-                val file = File(path)
-                if (!file.exists() || !file.canRead()) return null
-
-                cachedReader?.close()
-                return try {
-                    val reader = GpkgReader(path)
-                    cachedReader = reader
-                    cachedPath = path
-                    reader
-                } catch (_: Exception) {
-                    null
-                }
-            }
+            return GpkgReaderProvider.getOrOpen(path)
         }
 
         fun closeCachedReader() {
-            synchronized(lock) {
-                cachedReader?.close()
-                cachedReader = null
-                cachedPath = null
-            }
+            GpkgReaderProvider.closeAll()
         }
     }
 
