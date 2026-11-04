@@ -434,7 +434,7 @@ fun GisScreen(
                                 .fillMaxWidth()
                                 .padding(horizontal = 8.dp)
                         ) {
-                            items(availableLayers) { layer ->
+                            items(availableLayers, key = { it.name }) { layer ->
                                 val isSelectedEditLayer = activeEditLayer == layer.name
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),

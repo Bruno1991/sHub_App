@@ -1,6 +1,7 @@
 package com.saile.shub.gis.domain
 
 import android.database.sqlite.SQLiteDatabase
+import android.util.Log
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -30,37 +31,32 @@ object GpkgRtreeReader {
     ): List<Long> {
         val nodeTable = "rtree_${layerName}_${geomCol}_node"
 
-        val exists = runCatching {
-            db.rawQuery(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-                arrayOf(nodeTable)
-            ).use { it.moveToFirst() }
-        }.getOrDefault(false)
-
-        if (!exists) return emptyList()
-
         val matchingFids = mutableListOf<Long>()
         val queue = ArrayDeque<Long>()
         queue.add(1L) // Root node in SQLite RTree is always nodeno = 1
 
-        val querySql = "SELECT data FROM \"$nodeTable\" WHERE nodeno = ?"
-        val qMinX = minX.toFloat()
-        val qMaxX = maxX.toFloat()
-        val qMinY = minY.toFloat()
-        val qMaxY = maxY.toFloat()
+        val qMinX = minOf(minX, maxX).toFloat()
+        val qMaxX = maxOf(minX, maxX).toFloat()
+        val qMinY = minOf(minY, maxY).toFloat()
+        val qMaxY = maxOf(minY, maxY).toFloat()
 
         var visited = 0
-        val maxVisited = 600
+        val maxVisited = 800
 
         while (queue.isNotEmpty() && matchingFids.size < limit && visited < maxVisited) {
             val nodeno = queue.removeFirst()
             visited++
 
-            val blob: ByteArray? = runCatching {
-                db.rawQuery(querySql, arrayOf(nodeno.toString())).use { cursor ->
+            val blob: ByteArray? = try {
+                db.rawQuery("SELECT data FROM \"$nodeTable\" WHERE nodeno = $nodeno", null).use { cursor ->
                     if (cursor.moveToFirst()) cursor.getBlob(0) else null
                 }
-            }.getOrNull()
+            } catch (e: Exception) {
+                if (visited == 1) {
+                    Log.w("ShubGis", "Rtree query on table '$nodeTable' failed at root: ${e.message}")
+                }
+                null
+            }
 
             if (blob == null || blob.size < 4) continue
 
@@ -90,6 +86,11 @@ object GpkgRtreeReader {
             }
         }
 
+        if (matchingFids.isNotEmpty()) {
+            Log.d("ShubGis", "RTree '$layerName': visited $visited nodes, found ${matchingFids.size} fids in [$qMinX, $qMaxX, $qMinY, $qMaxY]")
+        }
+
         return matchingFids
     }
 }
+

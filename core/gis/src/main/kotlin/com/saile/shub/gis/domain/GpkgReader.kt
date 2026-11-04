@@ -1,6 +1,7 @@
 package com.saile.shub.gis.domain
 
 import android.database.sqlite.SQLiteDatabase
+import android.util.Log
 import com.saile.shub.core.geo.GeoCoordinate
 import com.saile.shub.core.geo.UtmConverter
 import com.saile.shub.gis.data.entities.GisFeatureEntity
@@ -417,15 +418,16 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
 
             // Scale-dependent visibility rules:
             // High & Medium voltage lines, substations and towers are visible at all scales.
-            // Transformers, switches and low-voltage lines appear at regional scale (>= 8.5).
-            // Distribution poles appear at municipal/neighborhood scale (>= 9.5).
+            // Transformers, switches and capacitors appear at regional scale (>= 7.5).
+            // Low-voltage lines appear at local scale (>= 8.0).
+            // Distribution poles appear at neighborhood scale (>= 8.5).
             val shouldRender = when (type) {
                 GisElementType.SUBSTATION, GisElementType.TOWER, GisElementType.SPAN_AT, GisElementType.SPAN_MT -> true
                 GisElementType.TRANSFORMER, GisElementType.SWITCH, GisElementType.REGULATOR,
-                GisElementType.CAPACITOR -> zoomLevel >= 8.5
-                GisElementType.SPAN_BT -> zoomLevel >= 9.0
-                GisElementType.POLE -> zoomLevel >= 9.5
-                else -> zoomLevel >= 9.0
+                GisElementType.CAPACITOR -> zoomLevel >= 7.5
+                GisElementType.SPAN_BT -> zoomLevel >= 8.0
+                GisElementType.POLE -> zoomLevel >= 8.5
+                else -> zoomLevel >= 8.5
             }
 
             if (shouldRender) {
@@ -494,24 +496,31 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
             val count = getLayerFeatureCount(layer)
 
             if (matchingFids.isNotEmpty()) {
-                for (chunk in matchingFids.chunked(500)) {
-                    val placeholders = chunk.joinToString(",") { "?" }
-                    val fetchSql = "SELECT * FROM \"$layer\" WHERE fid IN ($placeholders)"
-                    val args = chunk.map { it.toString() }.toTypedArray()
-                    runCatching {
-                        database.rawQuery(fetchSql, args).use { cursor ->
+                val startCount = elements.size
+                for (chunk in matchingFids.chunked(400)) {
+                    val idList = chunk.joinToString(",")
+                    val fetchSql = "SELECT * FROM \"$layer\" WHERE fid IN ($idList)"
+                    try {
+                        database.rawQuery(fetchSql, null).use { cursor ->
                             extractRenderElementsFromCursor(cursor, layer, type, geomCol, elements)
                         }
+                    } catch (e: Exception) {
+                        Log.e("ShubGis", "Error fetching features for layer '$layer': ${e.message}")
                     }
                 }
+                Log.i("ShubGis", "Layer '$layer': found ${matchingFids.size} fids, added ${elements.size - startCount} elements")
             } else if (count in 1..1000) {
                 // Fallback for small reference layers (e.g. Substations, Regulators, Capacitors)
+                val startCount = elements.size
                 val fetchSql = "SELECT * FROM \"$layer\" LIMIT $queryLimit"
-                runCatching {
+                try {
                     database.rawQuery(fetchSql, null).use { cursor ->
                         extractRenderElementsFromCursor(cursor, layer, type, geomCol, elements)
                     }
+                } catch (e: Exception) {
+                    Log.e("ShubGis", "Error fetching fallback for layer '$layer': ${e.message}")
                 }
+                Log.i("ShubGis", "Layer '$layer' (fallback): added ${elements.size - startCount} elements")
             }
         }
 
@@ -526,7 +535,7 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
         elements: MutableList<GisRenderElement>
     ) {
         val colNames = cursor.columnNames
-        val geomIdx = colNames.indexOf(geomCol)
+        val geomIdx = colNames.indexOfFirst { it.equals(geomCol, ignoreCase = true) }
         val fidIdx = colNames.indexOfFirst { it.equals("fid", ignoreCase = true) || it.equals("id", ignoreCase = true) }
 
         while (cursor.moveToNext()) {
