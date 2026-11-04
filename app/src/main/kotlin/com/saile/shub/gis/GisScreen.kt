@@ -271,12 +271,6 @@ fun GisScreen(
         map?.postInvalidate()
     }
 
-    // Measurement mode toggle
-    LaunchedEffect(isMeasurementMode) {
-        measurementOverlay.isActive = isMeasurementMode
-        mapViewRef?.postInvalidate()
-    }
-
     // Real-time GPS user position rendering on vector overlay
     LaunchedEffect(positioningInfo, compassHeading) {
         vectorOverlay.updateUserPosition(positioningInfo, compassHeading)
@@ -385,7 +379,7 @@ fun GisScreen(
             drawerState.isOpen -> coroutineScope.launch { drawerState.close() }
             previewPhotoPath != null -> previewPhotoPath = null
             selectedTarget != null -> viewModel.clearSelection()
-            isMeasurementMode -> viewModel.toggleMeasurementMode()
+            isSearchFocused -> isSearchFocused = false
             interactionMode == GisInteractionMode.DIGITIZE -> viewModel.setInteractionMode(GisInteractionMode.BROWSE)
             else -> onBack()
         }
@@ -581,33 +575,7 @@ fun GisScreen(
                                 Icon(Icons.Filled.Menu, contentDescription = "Painel QField", tint = Color.White)
                             }
 
-                            // Mode Switcher Toggle: Navegar vs Digitalizar
-                            Surface(
-                                shape = RoundedCornerShape(16.dp),
-                                color = if (interactionMode == GisInteractionMode.DIGITIZE) Color(0xFFD32F2F) else QfGreenDark,
-                                modifier = Modifier
-                                    .clickable { viewModel.toggleInteractionMode() }
-                                    .padding(vertical = 4.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = if (interactionMode == GisInteractionMode.DIGITIZE) Icons.Filled.Edit else Icons.Filled.Explore,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Text(
-                                        text = interactionMode.label,
-                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, color = Color.White)
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
 
                             // Project Name
                             Text(
@@ -617,11 +585,6 @@ fun GisScreen(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
                             )
-
-                            // Search Action
-                            IconButton(onClick = { isSearchFocused = !isSearchFocused }) {
-                                Icon(Icons.Filled.Search, contentDescription = "Buscar ativo", tint = Color.White)
-                            }
 
                             // GNSS Positioning Status Pill (QField GNSS Widget)
                             Surface(
@@ -650,9 +613,11 @@ fun GisScreen(
                                 }
                             }
 
-                            // Overflow Menu
-                            IconButton(onClick = { showProjectInfoDialog = true }) {
-                                Icon(Icons.Filled.MoreVert, contentDescription = "Mais opções", tint = Color.White)
+                            Spacer(modifier = Modifier.width(4.dp))
+
+                            // Search Action (Lupa sempre no canto superior direito)
+                            IconButton(onClick = { isSearchFocused = !isSearchFocused }) {
+                                Icon(Icons.Filled.Search, contentDescription = "Buscar ativo", tint = Color.White)
                             }
                         }
 
@@ -851,14 +816,14 @@ fun GisScreen(
                     zoomLevel = currentZoom,
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(start = 12.dp, bottom = if (interactionMode == GisInteractionMode.DIGITIZE || isMeasurementMode || selectedTarget != null) 210.dp else 24.dp)
+                        .padding(start = 12.dp, bottom = if (interactionMode == GisInteractionMode.DIGITIZE || selectedTarget != null) 210.dp else 24.dp)
                 )
 
                 // 4. Floating Right Toolbar (QField Side Tool Controls)
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(end = 12.dp, bottom = if (interactionMode == GisInteractionMode.DIGITIZE || isMeasurementMode || selectedTarget != null) 210.dp else 24.dp),
+                        .padding(end = 12.dp, bottom = if (interactionMode == GisInteractionMode.DIGITIZE || selectedTarget != null) 210.dp else 24.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     horizontalAlignment = Alignment.End
                 ) {
@@ -892,15 +857,6 @@ fun GisScreen(
                         contentColor = MaterialTheme.colorScheme.onSurface
                     ) {
                         Icon(Icons.Filled.ZoomOutMap, contentDescription = "Extensão Total")
-                    }
-
-                    // QField Measuring Tool (Régua)
-                    SmallFloatingActionButton(
-                        onClick = viewModel::toggleMeasurementMode,
-                        containerColor = if (isMeasurementMode) QfAccentOrange else MaterialTheme.colorScheme.surface,
-                        contentColor = if (isMeasurementMode) Color.Black else MaterialTheme.colorScheme.onSurface
-                    ) {
-                        Icon(Icons.Filled.Straighten, contentDescription = "Régua de Medição")
                     }
                 }
 
@@ -974,90 +930,7 @@ fun GisScreen(
                     }
                 }
 
-                // 6. QField Measuring Tool Bar
-                if (isMeasurementMode) {
-                    Surface(
-                        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        shadowElevation = 12.dp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.BottomCenter)
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Filled.Straighten, contentDescription = null, tint = QfAccentOrange)
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Régua de Medição QField", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                                }
-                                IconButton(onClick = viewModel::toggleMeasurementMode) {
-                                    Icon(Icons.Filled.Close, contentDescription = "Fechar régua")
-                                }
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                                horizontalArrangement = Arrangement.SpaceAround
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Distância", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                                    Text(
-                                        GisMeasurementOverlay.formatDistance(measureDist),
-                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = QfGreenPrimary)
-                                    )
-                                }
-                                if (measurePointsCount >= 3) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text("Área Polígono", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                                        Text(
-                                            GisMeasurementOverlay.formatArea(measureArea),
-                                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = QfAccentOrange)
-                                        )
-                                    }
-                                }
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Button(
-                                    onClick = {
-                                        val map = mapViewRef ?: return@Button
-                                        measurementOverlay.addPoint(GeoPoint(centerLat, centerLon), map)
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = QfAccentOrange),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(Icons.Filled.AddLocationAlt, contentDescription = null, tint = Color.Black)
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Ponto na Mira", color = Color.Black, fontWeight = FontWeight.Bold)
-                                }
-
-                                OutlinedButton(
-                                    onClick = { measurementOverlay.removeLastPoint(mapViewRef) },
-                                    enabled = measurePointsCount > 0
-                                ) {
-                                    Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Desfazer")
-                                }
-
-                                OutlinedButton(
-                                    onClick = { measurementOverlay.clear(mapViewRef) },
-                                    enabled = measurePointsCount > 0
-                                ) {
-                                    Icon(Icons.Filled.DeleteSweep, contentDescription = "Limpar")
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 7. QField Feature Form / Inspection Sheet
+                // 5. QField Feature Form / Inspection Sheet
                 selectedTarget?.let { target ->
                     Card(
                         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
