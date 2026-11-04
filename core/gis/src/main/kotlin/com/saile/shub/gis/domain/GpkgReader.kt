@@ -49,6 +49,67 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
         return total
     }
 
+    fun getDatasetExtent(): BoundingBox? {
+        val database = db ?: return null
+        return runCatching {
+            database.rawQuery(
+                "SELECT min(min_x), min(min_y), max(max_x), max(max_y) FROM gpkg_contents WHERE data_type = 'features' AND srs_id IN (4326, 4674)",
+                null
+            ).use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                    BoundingBox(
+                        minLon = cursor.getDouble(0),
+                        minLat = cursor.getDouble(1),
+                        maxLon = cursor.getDouble(2),
+                        maxLat = cursor.getDouble(3)
+                    )
+                } else null
+            }
+        }.getOrNull()
+    }
+
+    fun classifyLayer(layer: String): GisElementType {
+        val lower = layer.lowercase(Locale.ROOT)
+        return when {
+            lower.contains("subesta") -> GisElementType.SUBSTATION
+            lower.contains("torre") -> GisElementType.TOWER
+            lower.contains("poste de trans") -> GisElementType.POLE
+            lower.contains("vão at") || lower.contains("vao at") || lower.contains("vo at") -> GisElementType.SPAN_AT
+            lower.contains("transformador") -> GisElementType.TRANSFORMER
+            lower.contains("chave") || lower.contains("fluxo da chave") -> GisElementType.SWITCH
+            lower.contains("regulador") -> GisElementType.REGULATOR
+            lower.contains("capacitor") -> GisElementType.CAPACITOR
+            lower.contains("vão mt") || lower.contains("vao mt") || lower.contains("vo mt") -> GisElementType.SPAN_MT
+            lower.contains("vão bt") || lower.contains("vao bt") || lower.contains("vo bt") -> GisElementType.SPAN_BT
+            lower.contains("poste") -> GisElementType.POLE
+            else -> GisElementType.OTHER
+        }
+    }
+
+    fun getLayerSummaries(): List<GisLayerSummary> {
+        val database = db ?: return emptyList()
+        val list = mutableListOf<GisLayerSummary>()
+        for (layer in getLayers()) {
+            val count = getLayerFeatureCount(layer)
+            val type = classifyLayer(layer)
+            val color = when (type) {
+                GisElementType.SUBSTATION -> "#00F200"
+                GisElementType.SPAN_AT -> "#FC07E3"
+                GisElementType.SPAN_MT -> "#052EF9"
+                GisElementType.SPAN_BT -> "#19F805"
+                GisElementType.TRANSFORMER -> "#0B0503"
+                GisElementType.SWITCH -> "#FB0313"
+                GisElementType.REGULATOR -> "#F59207"
+                GisElementType.CAPACITOR -> "#01DDFF"
+                GisElementType.TOWER -> "#FFFFFF"
+                GisElementType.POLE -> "#FFFFFF"
+                else -> "#9E9E9E"
+            }
+            list.add(GisLayerSummary(type = type, name = layer, featureCount = count, colorHex = color))
+        }
+        return list
+    }
+
     fun getGeometryInfo(layerName: String): Pair<String, Int> {
         val database = db ?: return Pair("geom", 4326)
         var geomColumn = "geom"
@@ -321,37 +382,28 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
         minLon: Double,
         maxLon: Double,
         zoomLevel: Double,
-        maxPerLayer: Int = 300
+        enabledTypes: Set<GisElementType>? = null,
+        maxPerLayer: Int = 500
     ): List<GisRenderElement> {
         val database = db ?: return emptyList()
         val elements = mutableListOf<GisRenderElement>()
 
-        // 1. Determine which layers to render based on zoom level
+        // 1. Determine which layers to render based on zoom level and user filter
         val layersToRender = mutableListOf<Pair<String, GisElementType>>()
         for (layer in getLayers()) {
-            val lower = layer.lowercase(Locale.ROOT)
-            val type = when {
-                lower.contains("subesta") -> GisElementType.SUBSTATION
-                lower.contains("torre") -> GisElementType.TOWER
-                lower.contains("vão at") || lower.contains("vao at") || lower.contains("vo at") -> GisElementType.SPAN_AT
-                lower.contains("transformador") -> GisElementType.TRANSFORMER
-                lower.contains("chave") -> GisElementType.SWITCH
-                lower.contains("regulador") -> GisElementType.REGULATOR
-                lower.contains("capacitor") -> GisElementType.CAPACITOR
-                lower.contains("vão mt") || lower.contains("vao mt") || lower.contains("vo mt") -> GisElementType.SPAN_MT
-                lower.contains("vão bt") || lower.contains("vao bt") || lower.contains("vo bt") -> GisElementType.SPAN_BT
-                lower.contains("poste") -> GisElementType.POLE
-                else -> GisElementType.OTHER
+            val type = classifyLayer(layer)
+            if (enabledTypes != null && !enabledTypes.contains(type)) {
+                continue
             }
 
-            // Zoom-based progressive visibility filter matching professional GIS standards
+            // Zoom-based progressive visibility matching QField standards
             val shouldRender = when (type) {
                 GisElementType.SUBSTATION, GisElementType.TOWER, GisElementType.SPAN_AT -> true
                 GisElementType.TRANSFORMER, GisElementType.SWITCH, GisElementType.REGULATOR,
-                GisElementType.CAPACITOR, GisElementType.SPAN_MT -> zoomLevel >= 11.5
-                GisElementType.SPAN_BT -> zoomLevel >= 13.5
-                GisElementType.POLE -> zoomLevel >= 14.5
-                else -> zoomLevel >= 15.0
+                GisElementType.CAPACITOR, GisElementType.SPAN_MT -> zoomLevel >= 11.0
+                GisElementType.SPAN_BT -> zoomLevel >= 13.0
+                GisElementType.POLE -> zoomLevel >= 14.0
+                else -> zoomLevel >= 14.0
             }
 
             if (shouldRender) {

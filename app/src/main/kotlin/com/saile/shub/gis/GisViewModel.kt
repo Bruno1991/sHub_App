@@ -2,13 +2,16 @@ package com.saile.shub.gis
 
 import android.app.Application
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import com.saile.shub.gis.data.AppDatabase
 import com.saile.shub.gis.data.entities.GisFeatureEntity
 import com.saile.shub.gis.data.entities.ImportedPackageEntity
+import com.saile.shub.gis.domain.BoundingBox
 import com.saile.shub.gis.domain.GisElementType
+import com.saile.shub.gis.domain.GisLayerSummary
 import com.saile.shub.gis.domain.GisRenderElement
 import com.saile.shub.gis.domain.GpkgReader
 import com.saile.shub.gis.usecase.GisSearchResult
@@ -19,8 +22,11 @@ import com.saile.shub.gis.usecase.SearchItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
@@ -65,62 +71,101 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     private val _visibleElements = MutableStateFlow<List<GisRenderElement>>(emptyList())
     val visibleElements: StateFlow<List<GisRenderElement>> = _visibleElements.asStateFlow()
 
+    private val _datasetExtent = MutableStateFlow<BoundingBox?>(null)
+    val datasetExtent: StateFlow<BoundingBox?> = _datasetExtent.asStateFlow()
+
+    private val _availableLayers = MutableStateFlow<List<GisLayerSummary>>(emptyList())
+    val availableLayers: StateFlow<List<GisLayerSummary>> = _availableLayers.asStateFlow()
+
+    private val _activeLayerFilter = MutableStateFlow<Set<GisElementType>>(GisElementType.values().toSet())
+    val activeLayerFilter: StateFlow<Set<GisElementType>> = _activeLayerFilter.asStateFlow()
+
+    private val _zoomToExtentEvent = MutableSharedFlow<BoundingBox>(extraBufferCapacity = 1)
+    val zoomToExtentEvent: SharedFlow<BoundingBox> = _zoomToExtentEvent.asSharedFlow()
+
     private val _offlineMbtilesPath = MutableStateFlow<String?>(null)
     val offlineMbtilesPath: StateFlow<String?> = _offlineMbtilesPath.asStateFlow()
 
     private var searchJob: Job? = null
     private var viewportJob: Job? = null
+    private var lastViewportParams: ViewportParams? = null
+
+    private data class ViewportParams(
+        val minLat: Double,
+        val maxLat: Double,
+        val minLon: Double,
+        val maxLon: Double,
+        val zoom: Double
+    )
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            // 1. Check if there is already a ready package with file present
-            val active = db.gisDao().getActivePackage()
-            if (active != null && File(active.fileUri).exists()) {
-                runCatching {
-                    GpkgReader(active.fileUri).use { it.createSearchIndexes() }
-                }
-                checkForOfflineMbtiles()
-                return@launch
-            }
-
-            // 2. Check if there are existing package records in Room whose file exists
-            val packages = db.gisDao().getAllPackages()
-            val existingPkg = packages.firstOrNull { File(it.fileUri).exists() }
-            if (existingPkg != null) {
-                runCatching {
-                    GpkgReader(existingPkg.fileUri).use { reader ->
-                        val count = reader.countTotalFeatures()
-                        reader.createSearchIndexes()
-                        db.gisDao().updatePackageStatus(existingPkg.id, "ready", count)
-                    }
-                }
-                checkForOfflineMbtiles()
-                return@launch
-            }
-
-            // 3. Auto-discover any .gpkg already present in files/gpkg/
-            val gpkgDir = File(getApplication<Application>().filesDir, "gpkg")
-            val files = gpkgDir.listFiles { f -> f.extension.equals("gpkg", ignoreCase = true) }
-            val firstGpkg = files?.maxByOrNull { it.length() }
-            if (firstGpkg != null && firstGpkg.exists()) {
-                runCatching {
-                    GpkgReader(firstGpkg.absolutePath).use { reader ->
-                        val totalFeatures = reader.countTotalFeatures()
-                        reader.createSearchIndexes()
-                        val pkg = ImportedPackageEntity(
-                            displayName = firstGpkg.name,
-                            fileUri = firstGpkg.absolutePath,
-                            importedAt = Instant.now().toString(),
-                            status = "ready",
-                            featureCount = totalFeatures
-                        )
-                        db.gisDao().insertPackage(pkg)
-                    }
-                }
-            }
-
+            loadActiveDataset(autoZoom = false)
             checkForOfflineMbtiles()
         }
+    }
+
+    fun loadActiveDataset(autoZoom: Boolean = false) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val file = getActiveGpkgFile() ?: return@launch
+            runCatching {
+                val reader = SearchFeatureUseCase.getReader(file.absolutePath) ?: GpkgReader(file.absolutePath)
+                val extent = reader.getDatasetExtent()
+                val layers = reader.getLayerSummaries()
+
+                _datasetExtent.value = extent
+                _availableLayers.value = layers
+
+                if (autoZoom && extent != null) {
+                    _zoomToExtentEvent.tryEmit(extent)
+                }
+
+                // If we have viewport coordinates or extent, refresh viewport
+                val params = lastViewportParams
+                if (params != null) {
+                    queryViewport(params.minLat, params.maxLat, params.minLon, params.maxLon, params.zoom)
+                } else if (extent != null) {
+                    queryViewport(extent.minLat, extent.maxLat, extent.minLon, extent.maxLon, 9.0)
+                }
+            }.onFailure {
+                Log.e("ShubGis", "Failed to load active dataset: ${it.message}", it)
+            }
+        }
+    }
+
+    private fun getActiveGpkgFile(): File? {
+        val gpkgDir = File(getApplication<Application>().filesDir, "gpkg")
+        val files = gpkgDir.listFiles { f -> f.extension.equals("gpkg", ignoreCase = true) }
+        val file = files?.maxByOrNull { it.length() }
+        if (file != null && file.exists()) {
+            return file
+        }
+        return null
+    }
+
+    fun toggleLayer(type: GisElementType) {
+        val current = _activeLayerFilter.value.toMutableSet()
+        if (current.contains(type)) {
+            current.remove(type)
+        } else {
+            current.add(type)
+        }
+        _activeLayerFilter.value = current
+        _availableLayers.value = _availableLayers.value.map {
+            if (it.type == type) it.copy(isVisible = current.contains(type)) else it
+        }
+
+        // Re-query current viewport with new layer filter
+        lastViewportParams?.let {
+            viewModelScope.launch(Dispatchers.IO) {
+                queryViewport(it.minLat, it.maxLat, it.minLon, it.maxLon, it.zoom)
+            }
+        }
+    }
+
+    fun zoomToProjectExtent() {
+        val extent = _datasetExtent.value ?: return
+        _zoomToExtentEvent.tryEmit(extent)
     }
 
     private fun checkForOfflineMbtiles() {
@@ -139,24 +184,30 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onViewportChanged(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, zoom: Double) {
+        lastViewportParams = ViewportParams(minLat, maxLat, minLon, maxLon, zoom)
         viewportJob?.cancel()
-        if (zoom < 8.0) {
+        if (zoom < 7.0) {
             _visibleElements.value = emptyList()
             return
         }
         viewportJob = viewModelScope.launch(Dispatchers.IO) {
             delay(100)
-            val active = db.gisDao().getActivePackage()
-            var fileUri = active?.fileUri
-            if (fileUri == null || !File(fileUri).exists()) {
-                val gpkgDir = File(getApplication<Application>().filesDir, "gpkg")
-                val f = gpkgDir.listFiles { file -> file.extension.equals("gpkg", ignoreCase = true) }?.firstOrNull()
-                fileUri = f?.absolutePath
-            }
-            val reader = fileUri?.let { SearchFeatureUseCase.getReader(it) }
-            val elements = reader?.getFeaturesInBoundingBox(minLat, maxLat, minLon, maxLon, zoom)
-            _visibleElements.value = elements ?: emptyList()
+            queryViewport(minLat, maxLat, minLon, maxLon, zoom)
         }
+    }
+
+    private suspend fun queryViewport(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, zoom: Double) {
+        val file = getActiveGpkgFile() ?: return
+        val reader = SearchFeatureUseCase.getReader(file.absolutePath)
+        val elements = reader?.getFeaturesInBoundingBox(
+            minLat = minLat,
+            maxLat = maxLat,
+            minLon = minLon,
+            maxLon = maxLon,
+            zoomLevel = zoom,
+            enabledTypes = _activeLayerFilter.value
+        )
+        _visibleElements.value = elements ?: emptyList()
     }
 
     fun selectRenderElement(element: GisRenderElement) {
@@ -203,6 +254,7 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                     _state.value = GisState.Importing(progress)
                     if (progress is ImportProgress.Completed) {
                         _state.value = GisState.Idle
+                        loadActiveDataset(autoZoom = true)
                     }
                 }
             } catch (e: Exception) {

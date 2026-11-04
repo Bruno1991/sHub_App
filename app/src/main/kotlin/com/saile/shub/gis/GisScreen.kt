@@ -75,10 +75,14 @@ fun GisScreen(
     val isSatelliteMode by viewModel.isSatelliteMode.collectAsState()
     val selectedTarget by viewModel.selectedTarget.collectAsState()
     val visibleElements by viewModel.visibleElements.collectAsState()
+    val datasetExtent by viewModel.datasetExtent.collectAsState()
+    val availableLayers by viewModel.availableLayers.collectAsState()
+    val activeLayerFilter by viewModel.activeLayerFilter.collectAsState()
     val offlineMbtilesPath by viewModel.offlineMbtilesPath.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var isSearchFocused by remember { mutableStateOf(false) }
+    var showLayersSheet by remember { mutableStateOf(false) }
 
     val vectorOverlay = remember {
         GisVectorOverlay(
@@ -88,19 +92,41 @@ fun GisScreen(
         )
     }
 
+    // Keep reference to MapView for camera animations
+    var mapViewRef by remember { mutableStateOf<MapView?>(null) }
+
     // Initialize osmdroid configuration
     LaunchedEffect(Unit) {
         Configuration.getInstance().load(context, context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
         Configuration.getInstance().userAgentValue = context.packageName
     }
 
-    // Keep reference to MapView for camera animations
-    var mapViewRef by remember { mutableStateOf<MapView?>(null) }
+    // React to auto-zoom events (e.g. dataset loaded or user clicked "Ver Tudo")
+    LaunchedEffect(Unit) {
+        viewModel.zoomToExtentEvent.collect { extent ->
+            val map = mapViewRef ?: return@collect
+            map.zoomToBoundingBox(
+                org.osmdroid.util.BoundingBox(extent.maxLat, extent.maxLon, extent.minLat, extent.minLon),
+                true,
+                60
+            )
+            viewModel.onViewportChanged(
+                minLat = extent.minLat,
+                maxLat = extent.maxLat,
+                minLon = extent.minLon,
+                maxLon = extent.maxLon,
+                zoom = map.zoomLevelDouble
+            )
+        }
+    }
 
-    // React to visibleElements changes by updating vector overlay
-    LaunchedEffect(visibleElements) {
-        vectorOverlay.updateElements(visibleElements)
-        mapViewRef?.postInvalidate()
+    // React to visibleElements or selected target changes
+    LaunchedEffect(visibleElements, selectedTarget) {
+        val map = mapViewRef
+        val zoom = map?.zoomLevelDouble ?: 9.0
+        val selId = selectedTarget?.feature?.id
+        vectorOverlay.updateElements(visibleElements, zoom, selId)
+        map?.postInvalidate()
     }
 
     // React to selected target changes by animating map view
@@ -177,21 +203,39 @@ fun GisScreen(
                     setMultiTouchControls(true)
                     isTilesScaledToDpi = true
                     setTileSource(if (isSatelliteMode) GisTileSources.ESRI_SATELLITE else TileSourceFactory.MAPNIK)
-                    controller.setZoom(9.0)
-                    // Center on Rondonia default
-                    controller.setCenter(GeoPoint(-10.83, -61.95))
+                    controller.setZoom(8.5)
+                    // Center on Rondonia grid center
+                    controller.setCenter(GeoPoint(-10.83, -63.28))
                     overlays.add(vectorOverlay)
 
                     addOnFirstLayoutListener { v, _, _, _, _ ->
                         val map = v as? MapView ?: return@addOnFirstLayoutListener
-                        val bbox = map.boundingBox ?: return@addOnFirstLayoutListener
-                        viewModel.onViewportChanged(
-                            minLat = bbox.latSouth,
-                            maxLat = bbox.latNorth,
-                            minLon = bbox.lonWest,
-                            maxLon = bbox.lonEast,
-                            zoom = map.zoomLevelDouble
-                        )
+                        val extent = viewModel.datasetExtent.value
+                        if (extent != null) {
+                            map.zoomToBoundingBox(
+                                org.osmdroid.util.BoundingBox(extent.maxLat, extent.maxLon, extent.minLat, extent.minLon),
+                                false,
+                                50
+                            )
+                            viewModel.onViewportChanged(
+                                minLat = extent.minLat,
+                                maxLat = extent.maxLat,
+                                minLon = extent.minLon,
+                                maxLon = extent.maxLon,
+                                zoom = map.zoomLevelDouble
+                            )
+                        } else {
+                            val bbox = map.boundingBox
+                            if (bbox != null) {
+                                viewModel.onViewportChanged(
+                                    minLat = bbox.latSouth,
+                                    maxLat = bbox.latNorth,
+                                    minLon = bbox.lonWest,
+                                    maxLon = bbox.lonEast,
+                                    zoom = map.zoomLevelDouble
+                                )
+                            }
+                        }
                     }
 
                     addMapListener(object : org.osmdroid.events.MapListener {
@@ -254,7 +298,7 @@ fun GisScreen(
                         },
                         placeholder = {
                             Text(
-                                "Buscar nome, código, lat/lon ou UTM",
+                                "Buscar ativo, código, lat/lon ou UTM",
                                 style = MaterialTheme.typography.bodyMedium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -378,7 +422,7 @@ fun GisScreen(
                             modifier = Modifier
                                 .size(8.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF10B981))
+                                .background(Color(0xFF00F200))
                         )
                         Text(
                             text = "${visibleElements.size} ativos elétricos na tela",
@@ -412,14 +456,32 @@ fun GisScreen(
             }
         }
 
-        // 3. Floating Action Buttons: Satellite Toggle & Map Controls
+        // 3. Floating Action Buttons (Right Side Controls)
         Column(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(end = 16.dp, bottom = if (selectedTarget != null) 240.dp else 24.dp),
+                .padding(end = 16.dp, bottom = if (selectedTarget != null) 250.dp else 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.End
         ) {
+            // Layer Control Button (Camadas QField)
+            FloatingActionButton(
+                onClick = { showLayersSheet = true },
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            ) {
+                Icon(Icons.Filled.Layers, contentDescription = "Controle de Camadas")
+            }
+
+            // Zoom to Extent ("Ver Todo o Projeto")
+            SmallFloatingActionButton(
+                onClick = viewModel::zoomToProjectExtent,
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ) {
+                Icon(Icons.Filled.ZoomOutMap, contentDescription = "Ver Todo o Projeto")
+            }
+
             // Satellite / Street Mode Switcher
             ExtendedFloatingActionButton(
                 onClick = viewModel::toggleSatelliteMode,
@@ -433,20 +495,96 @@ fun GisScreen(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
                 contentColor = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
 
-            // Center on Rondonia / Default
-            SmallFloatingActionButton(
-                onClick = {
-                    mapViewRef?.controller?.animateTo(GeoPoint(-10.83, -61.95), 9.0, 600L)
-                },
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface
+        // 4. Layer Control Modal Bottom Sheet (Camadas do QField)
+        if (showLayersSheet) {
+            ModalBottomSheet(
+                onDismissRequest = { showLayersSheet = false },
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
             ) {
-                Icon(Icons.Filled.MyLocation, contentDescription = "Centralizar Visão Geral")
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 8.dp)
+                        .padding(bottom = 32.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Camadas do GeoPackage",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        TextButton(onClick = viewModel::zoomToProjectExtent) {
+                            Icon(Icons.Filled.ZoomOutMap, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Ver Tudo")
+                        }
+                    }
+
+                    Text(
+                        text = "Ative ou oculte as camadas de transmissão e distribuição:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+
+                    HorizontalDivider()
+
+                    LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 380.dp)) {
+                        items(availableLayers) { layer ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp)
+                                    .clickable { viewModel.toggleLayer(layer.type) },
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                runCatching { Color(android.graphics.Color.parseColor(layer.colorHex)) }
+                                                    .getOrDefault(Color.Gray)
+                                            )
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text(
+                                            text = layer.name,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Text(
+                                            text = "${layer.featureCount} elementos",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color.Gray
+                                        )
+                                    }
+                                }
+
+                                Switch(
+                                    checked = activeLayerFilter.contains(layer.type),
+                                    onCheckedChange = { viewModel.toggleLayer(layer.type) }
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        // 4. Asset Details Card (When a Feature or Coordinate is Selected)
+        // 5. Asset Details Card (When a Feature or Coordinate is Selected)
         selectedTarget?.let { target ->
             Card(
                 shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
@@ -455,7 +593,7 @@ fun GisScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
-                    .heightIn(max = 230.dp)
+                    .heightIn(max = 240.dp)
             ) {
                 Column(
                     modifier = Modifier
@@ -538,7 +676,7 @@ fun GisScreen(
                                         list.add(k to v)
                                     }
                                 }
-                                list.take(6)
+                                list.take(8)
                             }.getOrDefault(emptyList())
                         }
 

@@ -41,3 +41,11 @@ sealed class GisRenderElement {
     ) : GisRenderElement()
 }
 
+data class GisLayerSummary(
+    val type: GisElementType,
+    val name: String,
+    val featureCount: Int,
+    val colorHex: String,
+    val isVisible: Boolean = true
+)
+
