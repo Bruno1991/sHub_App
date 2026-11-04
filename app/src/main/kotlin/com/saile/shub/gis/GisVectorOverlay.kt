@@ -280,39 +280,26 @@ class GisVectorOverlay(
                     continue
                 }
 
-                val paint: Paint
-                val radius: Float
-                val isWhite: Boolean
+                val symbol = GisSymbolProvider.getSymbol(elem.type, density)
+                if (symbol != null) {
+                    canvas.drawBitmap(symbol.bitmap, cx - symbol.halfWidth, cy - symbol.halfHeight, null)
 
-                when (elem.type) {
-                    GisElementType.SUBSTATION -> { paint = subPaint; radius = 13f * density; isWhite = false }
-                    GisElementType.TOWER -> { paint = towerPaint; radius = 8.5f * density; isWhite = true }
-                    GisElementType.TRANSFORMER -> { paint = trafoPaint; radius = 7.5f * density; isWhite = false }
-                    GisElementType.SWITCH -> { paint = switchPaint; radius = 7f * density; isWhite = false }
-                    GisElementType.REGULATOR -> { paint = regulatorPaint; radius = 7f * density; isWhite = false }
-                    GisElementType.CAPACITOR -> { paint = capacitorPaint; radius = 7f * density; isWhite = false }
-                    GisElementType.POLE -> { paint = polePaint; radius = 4.5f * density; isWhite = true }
-                    else -> { paint = polePaint; radius = 4.5f * density; isWhite = true }
-                }
-
-                // Outer border for contrast on satellite & vector maps
-                val border = if (isWhite) darkBorderPaint else whiteBorderPaint
-                canvas.drawCircle(cx, cy, radius + 1.5f * density, border)
-                canvas.drawCircle(cx, cy, radius, paint)
-
-                // Highlight ring if element is selected
-                if (elem.fid == selectedFid) {
-                    canvas.drawCircle(cx, cy, radius + 8f * density, selectionRingPaint)
-                }
-
-                // Text labels when zoomed in (zoom >= 15.0) like QField
-                if (zoomDouble >= 15.0 && elem.type != GisElementType.POLE) {
-                    val label = elem.title
-                    if (label.isNotBlank()) {
-                        val textY = cy - radius - 8f * density
-                        canvas.drawText(label, cx + 6f * density, textY, labelOutlinePaint)
-                        canvas.drawText(label, cx + 6f * density, textY, labelTextPaint)
+                    // Highlight ring if element is selected
+                    if (elem.fid == selectedFid) {
+                        canvas.drawCircle(cx, cy, symbol.touchRadius + 4f * density, selectionRingPaint)
                     }
+
+                    // Text labels when zoomed in (zoom >= 15.0) like QField
+                    if (zoomDouble >= 15.0 && elem.type != GisElementType.POLE) {
+                        val label = elem.title
+                        if (label.isNotBlank()) {
+                            val textY = cy - symbol.halfHeight - 6f * density
+                            canvas.drawText(label, cx + 6f * density, textY, labelOutlinePaint)
+                            canvas.drawText(label, cx + 6f * density, textY, labelTextPaint)
+                        }
+                    }
+                } else {
+                    canvas.drawCircle(cx, cy, 5f * density, polePaint)
                 }
             }
         }
@@ -377,8 +364,10 @@ class GisVectorOverlay(
             if (elem is GisRenderElement.Point) {
                 tempGeoPoint.setCoords(elem.latitude, elem.longitude)
                 pj.toPixels(tempGeoPoint, p1)
+                val symbol = GisSymbolProvider.getSymbol(elem.type, density)
+                val threshold = (symbol?.touchRadius?.toDouble() ?: touchThreshold).coerceAtLeast(36.0)
                 val dist = hypot(p1.x.toDouble() - tapX, p1.y.toDouble() - tapY)
-                if (dist < touchThreshold && dist < closestPointDist) {
+                if (dist < threshold && dist < closestPointDist) {
                     closestPoint = elem
                     closestPointDist = dist
                 }

@@ -466,15 +466,28 @@ fun GisScreen(
                                         Spacer(modifier = Modifier.width(10.dp))
 
                                         // Symbology Icon / Color Swatch
-                                        Box(
-                                            modifier = Modifier
-                                                .size(16.dp)
-                                                .clip(if (layer.type == GisElementType.SPAN_AT || layer.type == GisElementType.SPAN_MT || layer.type == GisElementType.SPAN_BT) RoundedCornerShape(2.dp) else CircleShape)
-                                                .background(
-                                                    runCatching { Color(android.graphics.Color.parseColor(layer.colorHex)) }.getOrDefault(Color.Gray)
-                                                )
-                                                .border(1.dp, Color.DarkGray, if (layer.type == GisElementType.SPAN_AT || layer.type == GisElementType.SPAN_MT || layer.type == GisElementType.SPAN_BT) RoundedCornerShape(2.dp) else CircleShape)
-                                        )
+                                        val isLineLayer = layer.type in listOf(GisElementType.SPAN_AT, GisElementType.SPAN_MT, GisElementType.SPAN_BT)
+                                        val symbolIcon = remember(layer.type) {
+                                            if (!isLineLayer) GisSymbolProvider.getSymbol(layer.type, 2.5f)?.bitmap?.asImageBitmap() else null
+                                        }
+
+                                        if (symbolIcon != null) {
+                                            androidx.compose.foundation.Image(
+                                                bitmap = symbolIcon,
+                                                contentDescription = layer.name,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        } else {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(16.dp)
+                                                    .clip(if (isLineLayer) RoundedCornerShape(2.dp) else CircleShape)
+                                                    .background(
+                                                        runCatching { Color(android.graphics.Color.parseColor(layer.colorHex)) }.getOrDefault(Color.Gray)
+                                                    )
+                                                    .border(1.dp, Color.DarkGray, if (isLineLayer) RoundedCornerShape(2.dp) else CircleShape)
+                                            )
+                                        }
                                         Spacer(modifier = Modifier.width(12.dp))
 
                                         Column(modifier = Modifier.weight(1f)) {

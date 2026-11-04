@@ -168,3 +168,4 @@ class GpkgRtreeReaderTest {
         assertTrue(cancelled.isNotEmpty())
     }
 }
+
