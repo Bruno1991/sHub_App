@@ -85,6 +85,7 @@ fun GisScreen(
     val datasetExtent by viewModel.datasetExtent.collectAsState()
     val availableLayers by viewModel.availableLayers.collectAsState()
     val enabledLayers by viewModel.enabledLayers.collectAsState()
+    val currentBasemap by viewModel.currentBasemap.collectAsState()
 
     val isReticleVisible by viewModel.isReticleVisible.collectAsState()
     val isMeasurementMode by viewModel.isMeasurementMode.collectAsState()
@@ -125,6 +126,7 @@ fun GisScreen(
     var showPositioningDialog by remember { mutableStateOf(false) }
     var showProjectInfoDialog by remember { mutableStateOf(false) }
     var showActiveLayerSelector by remember { mutableStateOf(false) }
+    var showBasemapDialog by remember { mutableStateOf(false) }
 
     // Measurement HUD state
     var measureDist by remember { mutableDoubleStateOf(0.0) }
@@ -194,6 +196,13 @@ fun GisScreen(
         osmConfig.tileFileSystemCacheMaxBytes = 3L * 1024L * 1024L * 1024L // 3 GB
         osmConfig.tileFileSystemCacheTrimBytes = 2L * 1024L * 1024L * 1024L // 2 GB
         osmConfig.expirationExtendedDuration = 1000L * 60L * 60L * 24L * 365L * 10L // 10 years
+    }
+
+    // Dynamic Basemap Switcher (Google Satellite, Hybrid, Esri, OSM, Topo)
+    LaunchedEffect(currentBasemap, mapViewRef) {
+        val map = mapViewRef ?: return@LaunchedEffect
+        map.setTileSource(GisTileSources.getTileSource(currentBasemap))
+        map.invalidate()
     }
 
     // Auto-zoom to dataset extent
@@ -530,6 +539,15 @@ fun GisScreen(
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         NavigationDrawerItem(
+                            icon = { Icon(Icons.Filled.Layers, contentDescription = null) },
+                            label = { Text("Mapa Base: ${currentBasemap.displayName}") },
+                            selected = false,
+                            onClick = {
+                                coroutineScope.launch { drawerState.close() }
+                                showBasemapDialog = true
+                            }
+                        )
+                        NavigationDrawerItem(
                             icon = { Icon(Icons.Filled.FileUpload, contentDescription = null) },
                             label = { Text("Importar Outro GeoPackage") },
                             selected = false,
@@ -702,7 +720,7 @@ fun GisScreen(
                         MapView(ctx).apply {
                             setMultiTouchControls(true)
                             isTilesScaledToDpi = true
-                            setTileSource(TileSourceFactory.MAPNIK)
+                            setTileSource(GisTileSources.getTileSource(viewModel.currentBasemap.value))
                             controller.setZoom(8.5)
                             controller.setCenter(GeoPoint(-10.828, -63.284))
 
@@ -870,6 +888,14 @@ fun GisScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     horizontalAlignment = Alignment.End
                 ) {
+                    // Basemap Selector FAB (Google Satélite / Esri / OSM / Topo)
+                    SmallFloatingActionButton(
+                        onClick = { showBasemapDialog = true },
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    ) {
+                        Icon(Icons.Filled.Layers, contentDescription = "Camadas de Satélite / Mapa Base")
+                    }
                     // GPS Tracking FAB (QField MyLocation)
                     SmallFloatingActionButton(
                         onClick = viewModel::cycleGpsTrackingMode,
@@ -1210,6 +1236,70 @@ fun GisScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showActiveLayerSelector = false }) { Text("Fechar") }
+            }
+        )
+    }
+
+    // Dialog: Basemap Selection (Google Satellite Hybrid, Pure, Esri, OSM, Topo)
+    if (showBasemapDialog) {
+        AlertDialog(
+            onDismissRequest = { showBasemapDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Layers, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Selecionar Mapa Base")
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    BasemapType.values().forEach { type ->
+                        val isSelected = currentBasemap == type
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    viewModel.setBasemap(type)
+                                    showBasemapDialog = false
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        viewModel.setBasemap(type)
+                                        showBasemapDialog = false
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = type.displayName,
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                        )
+                                    )
+                                    Text(
+                                        text = type.subtitle,
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showBasemapDialog = false }) { Text("Fechar") }
             }
         )
     }

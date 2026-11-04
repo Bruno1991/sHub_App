@@ -75,8 +75,8 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow<GisState>(GisState.Idle)
     val state: StateFlow<GisState> = _state.asStateFlow()
 
-    // Default to Streets/Mapnik for instant offline performance and crisp vector contrast
-    private val _currentBasemap = MutableStateFlow(BasemapType.STREETS)
+    // Default to Google Hybrid for high-contrast engineering satellite view with roads
+    private val _currentBasemap = MutableStateFlow(BasemapType.GOOGLE_HYBRID)
     val currentBasemap: StateFlow<BasemapType> = _currentBasemap.asStateFlow()
 
     // QField Interaction Mode: BROWSE vs DIGITIZE
