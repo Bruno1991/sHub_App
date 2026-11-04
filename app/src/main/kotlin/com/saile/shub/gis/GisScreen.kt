@@ -66,13 +66,6 @@ import java.io.FileOutputStream
 import java.util.Locale
 import kotlinx.coroutines.launch
 
-// QField Signature Palette
-val QfGreenPrimary = Color(0xFF4E731B)
-val QfGreenLight = Color(0xFF7AA136)
-val QfGreenDark = Color(0xFF385313)
-val QfAccentOrange = Color(0xFFFF9100)
-val QfSurfaceDark = Color(0xFF222621)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GisScreen(
@@ -91,12 +84,11 @@ fun GisScreen(
     val visibleElements by viewModel.visibleElements.collectAsState()
     val datasetExtent by viewModel.datasetExtent.collectAsState()
     val availableLayers by viewModel.availableLayers.collectAsState()
-    val activeLayerFilter by viewModel.activeLayerFilter.collectAsState()
+    val enabledLayers by viewModel.enabledLayers.collectAsState()
 
     val isReticleVisible by viewModel.isReticleVisible.collectAsState()
     val isMeasurementMode by viewModel.isMeasurementMode.collectAsState()
     val gpsTrackingMode by viewModel.gpsTrackingMode.collectAsState()
-    val assetPhotosVersion by viewModel.assetPhotosVersion.collectAsState()
 
     // GPS & GNSS Tracker powered by mature sFoto location utilities
     val locationTracker = remember { GisLocationTracker(context) }
@@ -148,7 +140,6 @@ fun GisScreen(
     var showAddFeatureDialog by remember { mutableStateOf(false) }
     var showEditAttrsDialog by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
-    var previewPhotoPath by remember { mutableStateOf<String?>(null) }
 
     var mapViewRef by remember { mutableStateOf<MapView?>(null) }
 
@@ -244,23 +235,7 @@ fun GisScreen(
         }
     }
 
-    LaunchedEffect(datasetExtent, mapViewRef) {
-        val extent = datasetExtent ?: return@LaunchedEffect
-        val map = mapViewRef ?: return@LaunchedEffect
-        map.zoomToBoundingBox(
-            org.osmdroid.util.BoundingBox(extent.maxLat, extent.maxLon, extent.minLat, extent.minLon),
-            false,
-            60
-        )
-        val bbox = map.boundingBox ?: return@LaunchedEffect
-        viewModel.onViewportChanged(
-            minLat = bbox.latSouth,
-            maxLat = bbox.latNorth,
-            minLon = bbox.lonWest,
-            maxLon = bbox.lonEast,
-            zoom = map.zoomLevelDouble
-        )
-    }
+
 
     // Update overlay elements
     LaunchedEffect(visibleElements, selectedTarget, mapViewRef) {
@@ -351,33 +326,9 @@ fun GisScreen(
         }
     }
 
-    // Photo Attachment Picker
-    val photoLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        val target = selectedTarget ?: return@rememberLauncherForActivityResult
-        if (uri != null) {
-            runCatching {
-                val photosDir = File(context.filesDir, "photos")
-                if (!photosDir.exists()) photosDir.mkdirs()
-                val photoFile = File(photosDir, "asset_${target.feature?.id ?: System.currentTimeMillis()}_${System.currentTimeMillis()}.jpg")
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(photoFile).use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                viewModel.addAssetPhoto(target.feature?.id ?: 0L, photoFile.absolutePath)
-                Toast.makeText(context, "Foto anexada com sucesso!", Toast.LENGTH_SHORT).show()
-            }.onFailure {
-                Toast.makeText(context, "Erro ao anexar foto: ${it.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
     BackHandler {
         when {
             drawerState.isOpen -> coroutineScope.launch { drawerState.close() }
-            previewPhotoPath != null -> previewPhotoPath = null
             selectedTarget != null -> viewModel.clearSelection()
             isSearchFocused -> isSearchFocused = false
             interactionMode == GisInteractionMode.DIGITIZE -> viewModel.setInteractionMode(GisInteractionMode.BROWSE)
@@ -385,7 +336,7 @@ fun GisScreen(
         }
     }
 
-    // QField Dashboard Left Navigation Drawer (Opens ONLY when clicking hamburger button)
+    // Dashboard Left Navigation Drawer (Opens ONLY when clicking hamburger button)
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = false,
@@ -395,31 +346,39 @@ fun GisScreen(
                 drawerContainerColor = MaterialTheme.colorScheme.surface
             ) {
                 Column(modifier = Modifier.fillMaxSize()) {
-                    // QField Green Header Banner
+                    // Standard Header Banner matching app theme
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(QfGreenPrimary)
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
                             .statusBarsPadding()
                             .padding(16.dp)
                     ) {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Filled.Map, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+                                Icon(Icons.Filled.Map, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
-                                    text = "QField - sGIS",
-                                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, color = Color.White)
+                                    text = "sGis - Cartografia",
+                                    style = MaterialTheme.typography.titleLarge.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
                                 )
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = "Projeto: BASE.gpkg",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, color = Color.White)
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
                             )
                             Text(
                                 text = "SIRGAS 2000 / UTM 20S (EPSG:31980 / 4674)",
-                                style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFFE8F5E9))
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             )
                         }
                     }
@@ -473,8 +432,12 @@ fun GisScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Checkbox(
-                                            checked = activeLayerFilter.contains(layer.type),
-                                            onCheckedChange = { viewModel.toggleLayer(layer.type) },
+                                            checked = enabledLayers.contains(layer.name),
+                                            onCheckedChange = { viewModel.toggleLayer(layer.name) },
+                                            colors = CheckboxDefaults.colors(
+                                                checkedColor = MaterialTheme.colorScheme.primary,
+                                                checkmarkColor = MaterialTheme.colorScheme.onPrimary
+                                            ),
                                             modifier = Modifier.size(24.dp)
                                         )
                                         Spacer(modifier = Modifier.width(10.dp))
@@ -509,7 +472,7 @@ fun GisScreen(
                                             Icon(
                                                 imageVector = Icons.Filled.Edit,
                                                 contentDescription = "Camada ativa para edição",
-                                                tint = QfGreenPrimary,
+                                                tint = MaterialTheme.colorScheme.primary,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         }
@@ -556,10 +519,10 @@ fun GisScreen(
         // Main Screen Scaffold
         Scaffold(
             topBar = {
-                // Authentic QField Topbar
+                // App Standard Topbar
                 Surface(
-                    color = QfGreenPrimary,
-                    shadowElevation = 4.dp,
+                    color = MaterialTheme.colorScheme.surface,
+                    shadowElevation = 3.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.statusBarsPadding()) {
@@ -572,24 +535,42 @@ fun GisScreen(
                         ) {
                             // Hamburger Menu Icon
                             IconButton(onClick = { coroutineScope.launch { drawerState.open() } }) {
-                                Icon(Icons.Filled.Menu, contentDescription = "Painel QField", tint = Color.White)
+                                Icon(Icons.Filled.Menu, contentDescription = "Painel de Camadas", tint = MaterialTheme.colorScheme.onSurface)
                             }
 
                             Spacer(modifier = Modifier.width(4.dp))
 
-                            // Project Name
-                            Text(
-                                text = "BASE.gpkg",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = Color.White),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                            // Project Name Badge matching sHub Theme
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.weight(1f)
-                            )
+                            ) {
+                                Text(
+                                    text = "sGis",
+                                    style = MaterialTheme.typography.titleLarge.copy(
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                ) {
+                                    Text(
+                                        text = "BASE.gpkg",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
 
-                            // GNSS Positioning Status Pill (QField GNSS Widget)
+                            // GNSS Positioning Status Pill
                             Surface(
                                 shape = RoundedCornerShape(16.dp),
-                                color = QfGreenDark,
+                                color = MaterialTheme.colorScheme.surfaceVariant,
                                 modifier = Modifier
                                     .clickable { showPositioningDialog = true }
                                     .padding(vertical = 4.dp)
@@ -603,12 +584,15 @@ fun GisScreen(
                                         modifier = Modifier
                                             .size(8.dp)
                                             .clip(CircleShape)
-                                            .background(if (positioningInfo != null) Color(0xFF00E676) else Color.Red)
+                                            .background(if (positioningInfo != null) Color(0xFF00E676) else Color(0xFFFF5252))
                                     )
-                                    Icon(Icons.Filled.GpsFixed, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                    Icon(Icons.Filled.GpsFixed, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
                                     Text(
                                         text = positioningInfo?.accuracyText ?: "± --",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = Color.White)
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     )
                                 }
                             }
@@ -617,14 +601,14 @@ fun GisScreen(
 
                             // Search Action (Lupa sempre no canto superior direito)
                             IconButton(onClick = { isSearchFocused = !isSearchFocused }) {
-                                Icon(Icons.Filled.Search, contentDescription = "Buscar ativo", tint = Color.White)
+                                Icon(Icons.Filled.Search, contentDescription = "Buscar ativo", tint = MaterialTheme.colorScheme.onSurface)
                             }
                         }
 
                         // Expandable Search Bar
                         AnimatedVisibility(visible = isSearchFocused) {
                             Surface(
-                                color = Color.White,
+                                color = MaterialTheme.colorScheme.surfaceVariant,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -637,15 +621,17 @@ fun GisScreen(
                                         .padding(horizontal = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Filled.Search, contentDescription = null, tint = Color.Gray)
+                                    Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                                     TextField(
                                         value = searchQuery,
                                         onValueChange = {
                                             searchQuery = it
                                             viewModel.search(it)
                                         },
-                                        placeholder = { Text("Buscar ativo, código, lat/lon ou UTM") },
+                                        placeholder = { Text("Buscar ativo, código, lat/lon ou UTM", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)) },
                                         colors = TextFieldDefaults.colors(
+                                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                                             focusedContainerColor = Color.Transparent,
                                             unfocusedContainerColor = Color.Transparent,
                                             focusedIndicatorColor = Color.Transparent,
@@ -659,7 +645,7 @@ fun GisScreen(
                                         isSearchFocused = false
                                         viewModel.search("")
                                     }) {
-                                        Icon(Icons.Filled.Close, contentDescription = "Fechar busca", tint = Color.Gray)
+                                        Icon(Icons.Filled.Close, contentDescription = "Fechar busca", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
                             }
@@ -831,13 +817,14 @@ fun GisScreen(
                     SmallFloatingActionButton(
                         onClick = viewModel::cycleGpsTrackingMode,
                         containerColor = when (gpsTrackingMode) {
-                            GpsTrackingMode.OFF -> MaterialTheme.colorScheme.surface
-                            GpsTrackingMode.FOLLOW -> QfGreenPrimary
+                            GpsTrackingMode.OFF -> MaterialTheme.colorScheme.surfaceVariant
+                            GpsTrackingMode.FOLLOW -> MaterialTheme.colorScheme.primary
                             GpsTrackingMode.FOLLOW_BEARING -> Color(0xFF00E676)
                         },
                         contentColor = when (gpsTrackingMode) {
-                            GpsTrackingMode.OFF -> MaterialTheme.colorScheme.onSurface
-                            else -> Color.White
+                            GpsTrackingMode.OFF -> MaterialTheme.colorScheme.onSurfaceVariant
+                            GpsTrackingMode.FOLLOW -> MaterialTheme.colorScheme.onPrimary
+                            GpsTrackingMode.FOLLOW_BEARING -> Color.Black
                         }
                     ) {
                         Icon(
@@ -853,8 +840,8 @@ fun GisScreen(
                     // Full Extent
                     SmallFloatingActionButton(
                         onClick = viewModel::zoomToProjectExtent,
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        contentColor = MaterialTheme.colorScheme.onSurface
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                     ) {
                         Icon(Icons.Filled.ZoomOutMap, contentDescription = "Extensão Total")
                     }
@@ -887,7 +874,7 @@ fun GisScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Filled.Layers, contentDescription = null, tint = QfGreenPrimary, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Filled.Layers, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = activeEditLayer ?: "Selecione a camada",
@@ -918,7 +905,10 @@ fun GisScreen(
                                 // Add Point at Reticle (+)
                                 Button(
                                     onClick = { showAddFeatureDialog = true },
-                                    colors = ButtonDefaults.buttonColors(containerColor = QfGreenPrimary),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                    ),
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Icon(Icons.Filled.AddLocationAlt, contentDescription = null)
@@ -930,7 +920,7 @@ fun GisScreen(
                     }
                 }
 
-                // 5. QField Feature Form / Inspection Sheet
+                // 5. Feature Form / Inspection Sheet
                 selectedTarget?.let { target ->
                     Card(
                         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
@@ -956,7 +946,10 @@ fun GisScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = target.title,
-                                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, color = QfGreenPrimary)
+                                        style = MaterialTheme.typography.titleLarge.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
                                     )
                                     target.subtitle?.let {
                                         Text(text = it, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
@@ -995,10 +988,11 @@ fun GisScreen(
                                 Text("Traçar Rota no Google Maps", fontWeight = FontWeight.Bold, color = Color.White)
                             }
 
-                            // Coordinates and Photo Actions
+                            // Coordinates Action Button
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 OutlinedButton(
                                     onClick = {
@@ -1009,21 +1003,12 @@ fun GisScreen(
                                 ) {
                                     Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Coordenadas")
-                                }
-
-                                OutlinedButton(
-                                    onClick = { photoLauncher.launch("image/*") },
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(Icons.Filled.AddAPhoto, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Foto")
+                                    Text("Copiar Coordenadas")
                                 }
 
                                 if (interactionMode == GisInteractionMode.DIGITIZE) {
                                     IconButton(onClick = { showEditAttrsDialog = true }) {
-                                        Icon(Icons.Filled.Edit, contentDescription = "Editar", tint = QfGreenPrimary)
+                                        Icon(Icons.Filled.Edit, contentDescription = "Editar", tint = MaterialTheme.colorScheme.primary)
                                     }
                                     IconButton(onClick = { showDeleteConfirmDialog = true }) {
                                         Icon(Icons.Filled.Delete, contentDescription = "Excluir", tint = Color.Red)
@@ -1032,35 +1017,6 @@ fun GisScreen(
                             }
 
                             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                            // Attached Photos
-                            val photos = remember(target.feature?.id, assetPhotosVersion) {
-                                target.feature?.id?.let { viewModel.getAssetPhotos(it) } ?: emptyList()
-                            }
-                            if (photos.isNotEmpty()) {
-                                Text("Fotos Anexadas:", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                                LazyRow(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.padding(top = 4.dp)
-                                ) {
-                                    items(photos) { path ->
-                                        val bmp = remember(path) { runCatching { BitmapFactory.decodeFile(path) }.getOrNull() }
-                                        bmp?.let { b ->
-                                            Image(
-                                                bitmap = b.asImageBitmap(),
-                                                contentDescription = null,
-                                                modifier = Modifier
-                                                    .size(60.dp)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .border(1.dp, Color.Gray, RoundedCornerShape(8.dp))
-                                                    .clickable { previewPhotoPath = path },
-                                                contentScale = ContentScale.Crop
-                                            )
-                                        }
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(8.dp))
-                            }
 
                             // Attributes Table
                             target.feature?.let { f ->
@@ -1113,9 +1069,9 @@ fun GisScreen(
                                 searchResult.coordinateMatch?.let { coord ->
                                     item {
                                         ListItem(
-                                            headlineContent = { Text(coord.title, fontWeight = FontWeight.Bold, color = QfGreenPrimary) },
+                                            headlineContent = { Text(coord.title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) },
                                             supportingContent = { Text(coord.subtitle) },
-                                            leadingContent = { Icon(Icons.Filled.LocationOn, contentDescription = null, tint = QfGreenPrimary) },
+                                            leadingContent = { Icon(Icons.Filled.LocationOn, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                             modifier = Modifier.clickable {
                                                 viewModel.selectItem(coord)
                                                 isSearchFocused = false
@@ -1129,7 +1085,7 @@ fun GisScreen(
                                     ListItem(
                                         headlineContent = { Text(feat.title, fontWeight = FontWeight.SemiBold) },
                                         supportingContent = { Text(feat.subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                        leadingContent = { Icon(Icons.Filled.ElectricBolt, contentDescription = null, tint = QfGreenPrimary) },
+                                        leadingContent = { Icon(Icons.Filled.ElectricBolt, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                         modifier = Modifier.clickable {
                                             viewModel.selectItem(feat)
                                             isSearchFocused = false
@@ -1201,14 +1157,14 @@ fun GisScreen(
         )
     }
 
-    // Dialog: Positioning Information (QField GNSS Information View)
+    // Dialog: Positioning Information
     if (showPositioningDialog) {
         val pos = positioningInfo
         AlertDialog(
             onDismissRequest = { showPositioningDialog = false },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.GpsFixed, contentDescription = null, tint = QfGreenPrimary)
+                    Icon(Icons.Filled.GpsFixed, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Posicionamento GNSS")
                 }
@@ -1236,7 +1192,10 @@ fun GisScreen(
                         }
                         showPositioningDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = QfGreenPrimary)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
                 ) {
                     Text("Copiar Coordenadas")
                 }
@@ -1262,7 +1221,13 @@ fun GisScreen(
                 }
             },
             confirmButton = {
-                Button(onClick = { showProjectInfoDialog = false }, colors = ButtonDefaults.buttonColors(containerColor = QfGreenPrimary)) {
+                Button(
+                    onClick = { showProjectInfoDialog = false },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                ) {
                     Text("OK")
                 }
             }
@@ -1279,7 +1244,7 @@ fun GisScreen(
             title = { Text("Adicionar Ativo na Mira") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Camada: ${activeEditLayer ?: "Ponto"}", fontWeight = FontWeight.Bold, color = QfGreenPrimary)
+                    Text("Camada: ${activeEditLayer ?: "Ponto"}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                     Text("Coordenadas: %.6f, %.6f".format(Locale.US, centerLat, centerLon), style = MaterialTheme.typography.bodySmall)
 
                     OutlinedTextField(
@@ -1314,7 +1279,10 @@ fun GisScreen(
                             Toast.makeText(context, "Ativo salvo no GeoPackage!", Toast.LENGTH_SHORT).show()
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = QfGreenPrimary)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
                 ) {
                     Text("Salvar")
                 }
@@ -1358,7 +1326,10 @@ fun GisScreen(
                         showEditAttrsDialog = false
                         Toast.makeText(context, "Atributos atualizados!", Toast.LENGTH_SHORT).show()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = QfGreenPrimary)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
                 ) { Text("Salvar") }
             },
             dismissButton = {
@@ -1381,41 +1352,15 @@ fun GisScreen(
                         showDeleteConfirmDialog = false
                         Toast.makeText(context, "Elemento excluído com sucesso!", Toast.LENGTH_SHORT).show()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
                 ) { Text("Excluir") }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteConfirmDialog = false }) { Text("Cancelar") }
             }
         )
-    }
-
-    // Fullscreen Photo Preview
-    previewPhotoPath?.let { path ->
-        Dialog(onDismissRequest = { previewPhotoPath = null }) {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.Black),
-                modifier = Modifier.fillMaxWidth().height(420.dp)
-            ) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    val bitmap = remember(path) { runCatching { BitmapFactory.decodeFile(path) }.getOrNull() }
-                    if (bitmap != null) {
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "Foto ampliada",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit
-                        )
-                    }
-                    IconButton(
-                        onClick = { previewPhotoPath = null },
-                        modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
-                    ) {
-                        Icon(Icons.Filled.Close, contentDescription = "Fechar", tint = Color.White)
-                    }
-                }
-            }
-        }
     }
 }

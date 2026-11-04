@@ -98,8 +98,8 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     private val _availableLayers = MutableStateFlow<List<GisLayerSummary>>(emptyList())
     val availableLayers: StateFlow<List<GisLayerSummary>> = _availableLayers.asStateFlow()
 
-    private val _activeLayerFilter = MutableStateFlow<Set<GisElementType>>(GisElementType.values().toSet())
-    val activeLayerFilter: StateFlow<Set<GisElementType>> = _activeLayerFilter.asStateFlow()
+    private val _enabledLayers = MutableStateFlow<Set<String>>(emptySet())
+    val enabledLayers: StateFlow<Set<String>> = _enabledLayers.asStateFlow()
 
     private val _zoomToExtentEvent = MutableSharedFlow<BoundingBox>(replay = 1, extraBufferCapacity = 1)
     val zoomToExtentEvent: SharedFlow<BoundingBox> = _zoomToExtentEvent.asSharedFlow()
@@ -107,21 +107,17 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     private val _offlineMbtilesPath = MutableStateFlow<String?>(null)
     val offlineMbtilesPath: StateFlow<String?> = _offlineMbtilesPath.asStateFlow()
 
-    // QField Precision Reticle
+    // Precision Reticle
     private val _isReticleVisible = MutableStateFlow(true)
     val isReticleVisible: StateFlow<Boolean> = _isReticleVisible.asStateFlow()
 
-    // QField Measurement Tool (Régua de Medição)
+    // Measurement Tool (Régua de Medição)
     private val _isMeasurementMode = MutableStateFlow(false)
     val isMeasurementMode: StateFlow<Boolean> = _isMeasurementMode.asStateFlow()
 
     // GNSS / GPS Tracking
     private val _gpsTrackingMode = MutableStateFlow(GpsTrackingMode.OFF)
     val gpsTrackingMode: StateFlow<GpsTrackingMode> = _gpsTrackingMode.asStateFlow()
-
-    // Photo Attachments refresh trigger
-    private val _assetPhotosVersion = MutableStateFlow(0)
-    val assetPhotosVersion: StateFlow<Int> = _assetPhotosVersion.asStateFlow()
 
     private var searchJob: Job? = null
     private var viewportJob: Job? = null
@@ -150,8 +146,14 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                 val extent = reader.getDatasetExtent()
                 val layers = reader.getLayerSummaries()
 
+                if (_enabledLayers.value.isEmpty()) {
+                    _enabledLayers.value = layers.map { it.name }.toSet()
+                }
+
                 _datasetExtent.value = extent
-                _availableLayers.value = layers
+                _availableLayers.value = layers.map {
+                    it.copy(isVisible = _enabledLayers.value.contains(it.name))
+                }
 
                 if (_activeEditLayer.value == null && layers.isNotEmpty()) {
                     _activeEditLayer.value = layers.firstOrNull { it.type == GisElementType.POLE }?.name ?: layers.first().name
@@ -229,16 +231,16 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun toggleLayer(type: GisElementType) {
-        val current = _activeLayerFilter.value.toMutableSet()
-        if (current.contains(type)) {
-            current.remove(type)
+    fun toggleLayer(layerName: String) {
+        val current = _enabledLayers.value.toMutableSet()
+        if (current.contains(layerName)) {
+            current.remove(layerName)
         } else {
-            current.add(type)
+            current.add(layerName)
         }
-        _activeLayerFilter.value = current
+        _enabledLayers.value = current
         _availableLayers.value = _availableLayers.value.map {
-            if (it.type == type) it.copy(isVisible = current.contains(type)) else it
+            if (it.name == layerName) it.copy(isVisible = current.contains(layerName)) else it
         }
 
         lastViewportParams?.let {
@@ -275,6 +277,7 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onViewportChanged(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, zoom: Double) {
+        val isFirst = (lastViewportParams == null)
         lastViewportParams = ViewportParams(minLat, maxLat, minLon, maxLon, zoom)
         viewportJob?.cancel()
         if (zoom < 5.0) {
@@ -282,7 +285,9 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewportJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(200)
+            if (!isFirst) {
+                delay(100)
+            }
             queryViewport(minLat, maxLat, minLon, maxLon, zoom)
         }
     }
@@ -296,7 +301,7 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
             minLon = minLon,
             maxLon = maxLon,
             zoomLevel = zoom,
-            enabledTypes = _activeLayerFilter.value
+            enabledLayers = _enabledLayers.value
         )
         _visibleElements.value = elements ?: emptyList()
     }
@@ -357,9 +362,10 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         searchJob = viewModelScope.launch {
-            delay(150)
+            delay(120)
             try {
-                val results = searchUseCase.execute(query)
+                val gpkgPath = getActiveGpkgFile()?.absolutePath
+                val results = searchUseCase.execute(query, gpkgPath = gpkgPath)
                 _state.value = GisState.SearchResults(results)
             } catch (e: Exception) {
                 _state.value = GisState.Error(e.message ?: "Erro na busca.")
@@ -464,18 +470,5 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // --- Photo Attachments ---
-    fun getAssetPhotos(fid: Long): List<String> {
-        val prefs = getApplication<Application>().getSharedPreferences("gis_photos", Context.MODE_PRIVATE)
-        val set = prefs.getStringSet("photos_$fid", emptySet()) ?: emptySet()
-        return set.toList()
-    }
 
-    fun addAssetPhoto(fid: Long, photoPath: String) {
-        val prefs = getApplication<Application>().getSharedPreferences("gis_photos", Context.MODE_PRIVATE)
-        val set = (prefs.getStringSet("photos_$fid", emptySet()) ?: emptySet()).toMutableSet()
-        set.add(photoPath)
-        prefs.edit().putStringSet("photos_$fid", set).apply()
-        _assetPhotosVersion.value++
-    }
 }

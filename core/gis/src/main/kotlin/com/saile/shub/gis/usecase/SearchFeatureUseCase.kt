@@ -71,7 +71,12 @@ class SearchFeatureUseCase(private val gisDao: GisDao) {
         }
     }
 
-    suspend fun execute(query: String, limit: Int = 100, offset: Int = 0): GisSearchResult = withContext(Dispatchers.IO) {
+    suspend fun execute(
+        query: String,
+        gpkgPath: String? = null,
+        limit: Int = 100,
+        offset: Int = 0
+    ): GisSearchResult = withContext(Dispatchers.IO) {
         val trimmed = query.trim()
         if (trimmed.isBlank()) {
             return@withContext GisSearchResult(query, null, emptyList())
@@ -90,14 +95,15 @@ class SearchFeatureUseCase(private val gisDao: GisDao) {
         }
 
         val activePackage = runCatching { gisDao.getActivePackage() }.getOrNull()
-        val reader = activePackage?.let { getReader(it.fileUri) }
+        val path = gpkgPath ?: activePackage?.fileUri
+        val reader = path?.let { getReader(it) }
 
         val featuresList = if (coord != null) {
             // 2. If it's a coordinate, find nearby assets within ~2 km radius
             val gpkgNearby = reader?.findNearbyFeatures(
                 targetLat = coord.latitude,
                 targetLon = coord.longitude,
-                packageId = activePackage.id,
+                packageId = activePackage?.id ?: 1L,
                 radiusMeters = 2000.0,
                 limit = 30
             ) ?: emptyList()

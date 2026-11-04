@@ -12,6 +12,13 @@ import java.util.Locale
 class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
     private var db: SQLiteDatabase? = null
 
+    // In-memory caches to make metadata lookups and searches instantaneous
+    private val layersCache = mutableListOf<String>()
+    private val columnsCache = mutableMapOf<String, List<String>>()
+    private val geomInfoCache = mutableMapOf<String, Pair<String, Int>>()
+    private val layerCountCache = mutableMapOf<String, Int>()
+    private val searchColsCache = mutableMapOf<String, List<String>>()
+
     init {
         db = SQLiteDatabase.openDatabase(
             gpkgFilePath,
@@ -28,6 +35,7 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
     }
 
     fun getLayers(): List<String> {
+        if (layersCache.isNotEmpty()) return layersCache
         val database = db ?: return emptyList()
         val layers = mutableListOf<String>()
         database.rawQuery("SELECT table_name FROM gpkg_contents WHERE data_type = 'features'", null).use { cursor ->
@@ -35,16 +43,21 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                 layers.add(cursor.getString(0))
             }
         }
+        layersCache.clear()
+        layersCache.addAll(layers)
         return layers
     }
 
     fun getLayerFeatureCount(layerName: String): Int {
+        layerCountCache[layerName]?.let { return it }
         val database = db ?: return 0
-        return runCatching {
+        val count = runCatching {
             database.rawQuery("SELECT COUNT(*) FROM \"$layerName\"", null).use { cursor ->
                 if (cursor.moveToFirst()) cursor.getInt(0) else 0
             }
         }.getOrDefault(0)
+        layerCountCache[layerName] = count
+        return count
     }
 
     fun countTotalFeatures(): Int {
@@ -121,6 +134,7 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
     }
 
     fun getGeometryInfo(layerName: String): Pair<String, Int> {
+        geomInfoCache[layerName]?.let { return it }
         val database = db ?: return Pair("geom", 4326)
         var geomColumn = "geom"
         var srsId = 4326
@@ -133,10 +147,13 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                 srsId = cursor.getInt(1)
             }
         }
-        return Pair(geomColumn, srsId)
+        val pair = Pair(geomColumn, srsId)
+        geomInfoCache[layerName] = pair
+        return pair
     }
 
     fun getLayerColumns(layerName: String): List<String> {
+        columnsCache[layerName]?.let { return it }
         val database = db ?: return emptyList()
         val cols = mutableListOf<String>()
         database.rawQuery("PRAGMA table_info(\"$layerName\")", null).use { cursor ->
@@ -145,7 +162,50 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                 cols.add(cursor.getString(nameIndex))
             }
         }
+        columnsCache[layerName] = cols
         return cols
+    }
+
+    private fun normalizeCol(col: String): String {
+        return Normalizer.normalize(col, Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}"), "")
+            .replace('\uFFFD', 'o')
+            .lowercase(Locale.ROOT)
+    }
+
+    fun getSearchColumns(layer: String): List<String> {
+        searchColsCache[layer]?.let { return it }
+        val cols = getLayerColumns(layer)
+        val result = mutableListOf<String>()
+
+        val priorityCandidates = listOf(
+            "numero_operativo",
+            "name",
+            "nome",
+            "cod_id",
+            "codigo_do_",
+            "codigo",
+            "sigla_da_s",
+            "sigla",
+            "circuito",
+            "circuit_id",
+            "number",
+            "id",
+            "spec_name",
+            "alias"
+        )
+
+        for (cand in priorityCandidates) {
+            val match = cols.firstOrNull { col ->
+                val norm = normalizeCol(col)
+                norm == cand || norm.startsWith(cand) || (cand.length >= 4 && norm.contains(cand))
+            }
+            if (match != null && !result.contains(match)) {
+                result.add(match)
+            }
+        }
+        searchColsCache[layer] = result
+        return result
     }
 
     /**
@@ -156,44 +216,12 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
     fun createSearchIndexes(onProgress: ((layerName: String, layerIndex: Int, totalLayers: Int) -> Unit)? = null): Int {
         val database = db ?: return 0
         val layers = getLayers()
-        val priorityCandidates = listOf(
-            "numero_operativo",
-            "name",
-            "nome",
-            "codigo_do_",
-            "codigo",
-            "cod_id",
-            "sigla_da_s",
-            "circuito",
-            "circuit_id",
-            "circuit_1",
-            "circuit_2",
-            "number",
-            "id",
-            "spec_name",
-            "alias",
-            "tipo_de_es"
-        )
-
         var indexesCreated = 0
         database.beginTransaction()
         try {
             for ((idx, layer) in layers.withIndex()) {
-                val cols = getLayerColumns(layer)
-                val targetCols = mutableListOf<String>()
-
-                for (cand in priorityCandidates) {
-                    val match = cols.firstOrNull { 
-                        val lk = it.lowercase(Locale.ROOT)
-                        lk == cand || lk.startsWith(cand) || (cand.length >= 4 && lk.contains(cand))
-                    }
-                    if (match != null && !targetCols.contains(match)) {
-                        targetCols.add(match)
-                        if (targetCols.size >= 4) break
-                    }
-                }
-
-                for (col in targetCols) {
+                val targetCols = getSearchColumns(layer)
+                for (col in targetCols.take(4)) {
                     val cleanTbl = layer.filter { it.isLetterOrDigit() || it == '_' }
                     val cleanCol = col.filter { it.isLetterOrDigit() || it == '_' }
                     val idxName = ("idx_shub_${cleanTbl}_$cleanCol").take(48)
@@ -220,48 +248,41 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
         val trimmed = query.trim()
         if (trimmed.isBlank()) return emptyList()
 
-        val layers = getLayers()
         val results = mutableListOf<SearchItem.FeatureItem>()
         val seenFids = mutableSetOf<String>()
 
-        val priorityCandidates = listOf(
-            "numero_operativo",
-            "name",
-            "nome",
-            "codigo_do_",
-            "codigo",
-            "cod_id",
-            "sigla_da_s",
-            "circuito",
-            "circuit_id",
-            "number",
-            "id",
-            "spec_name",
-            "alias"
+        // Prioritize asset layers that field technicians search most frequently
+        val priorityOrder = listOf(
+            GisElementType.TRANSFORMER,
+            GisElementType.SWITCH,
+            GisElementType.SUBSTATION,
+            GisElementType.REGULATOR,
+            GisElementType.CAPACITOR,
+            GisElementType.POLE,
+            GisElementType.TOWER,
+            GisElementType.SPAN_MT,
+            GisElementType.SPAN_BT,
+            GisElementType.SPAN_AT
         )
 
-        for (layer in layers) {
+        val sortedLayers = getLayers().sortedBy { layer ->
+            val type = classifyLayer(layer)
+            val idx = priorityOrder.indexOf(type)
+            if (idx >= 0) idx else 99
+        }
+
+        for (layer in sortedLayers) {
             if (results.size >= limit) break
             val (geomCol, _) = getGeometryInfo(layer)
-            val cols = getLayerColumns(layer)
-            
-            val searchCols = mutableListOf<String>()
-            for (cand in priorityCandidates) {
-                val match = cols.firstOrNull {
-                    val lk = it.lowercase(Locale.ROOT)
-                    lk == cand || lk.startsWith(cand) || (cand.length >= 4 && lk.contains(cand))
-                }
-                if (match != null && !searchCols.contains(match)) {
-                    searchCols.add(match)
-                }
-            }
-
+            val searchCols = getSearchColumns(layer)
             if (searchCols.isEmpty()) continue
 
-            // 1. Prefix match using indexed columns
+            val rowCount = getLayerFeatureCount(layer)
+
+            // 1. Instant prefix match using B-Tree indexed columns
             for (col in searchCols.take(3)) {
                 if (results.size >= limit) break
-                val sql = "SELECT * FROM \"$layer\" WHERE \"$col\" LIKE ? COLLATE NOCASE LIMIT 20"
+                val sql = "SELECT * FROM \"$layer\" WHERE \"$col\" LIKE ? COLLATE NOCASE LIMIT 25"
                 runCatching {
                     database.rawQuery(sql, arrayOf("$trimmed%")).use { cursor ->
                         parseCursorFeatures(cursor, layer, geomCol, packageId, results, seenFids, limit)
@@ -269,8 +290,9 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                 }
             }
 
-            // 2. If short results and query length >= 3, also check contains for high assertiveness
-            if (results.size < 10 && trimmed.length >= 3) {
+            // 2. Contains match ONLY for small layers (< 5,000 rows like Substations, Towers, Regulators)
+            // Never perform unindexed table scans on large tables (700k+ rows)
+            if (results.size < 5 && rowCount < 5000 && trimmed.length >= 3) {
                 for (col in searchCols.take(2)) {
                     if (results.size >= limit) break
                     val sql = "SELECT * FROM \"$layer\" WHERE \"$col\" LIKE ? COLLATE NOCASE LIMIT 10"
@@ -392,8 +414,8 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
         minLon: Double,
         maxLon: Double,
         zoomLevel: Double,
-        enabledTypes: Set<GisElementType>? = null,
-        maxPerLayer: Int = 500
+        enabledLayers: Set<String>? = null,
+        maxPerLayer: Int = 10000
     ): List<GisRenderElement> {
         val database = db ?: return emptyList()
         val elements = mutableListOf<GisRenderElement>()
@@ -401,20 +423,22 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
         // 1. Determine which layers to render based on zoom level and user filter
         val layersToRender = mutableListOf<Pair<String, GisElementType>>()
         for (layer in getLayers()) {
-            val type = classifyLayer(layer)
-            if (enabledTypes != null && !enabledTypes.contains(type)) {
+            if (enabledLayers != null && !enabledLayers.contains(layer)) {
                 continue
             }
+            val type = classifyLayer(layer)
 
-            // Progressive visibility matching QField standards:
-            // High & Medium voltage lines, substations and towers are visible at all scales
+            // Scale-dependent visibility rules:
+            // High & Medium voltage lines, substations and towers are visible at all scales.
+            // Transformers, switches and low-voltage lines appear at regional scale (>= 8.5).
+            // Distribution poles appear at municipal/neighborhood scale (>= 9.5).
             val shouldRender = when (type) {
                 GisElementType.SUBSTATION, GisElementType.TOWER, GisElementType.SPAN_AT, GisElementType.SPAN_MT -> true
                 GisElementType.TRANSFORMER, GisElementType.SWITCH, GisElementType.REGULATOR,
-                GisElementType.CAPACITOR -> zoomLevel >= 10.0
-                GisElementType.SPAN_BT -> zoomLevel >= 10.5
-                GisElementType.POLE -> zoomLevel >= 11.5
-                else -> zoomLevel >= 10.5
+                GisElementType.CAPACITOR -> zoomLevel >= 8.5
+                GisElementType.SPAN_BT -> zoomLevel >= 9.0
+                GisElementType.POLE -> zoomLevel >= 9.5
+                else -> zoomLevel >= 9.0
             }
 
             if (shouldRender) {
@@ -442,10 +466,10 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
         }.getOrNull()
 
         val queryLimit = when {
-            zoomLevel >= 14.0 -> 3500
-            zoomLevel >= 12.0 -> 5000
-            zoomLevel >= 10.0 -> 7000
-            else -> 4000
+            zoomLevel >= 14.0 -> 8000
+            zoomLevel >= 12.0 -> 10000
+            zoomLevel >= 10.0 -> 12000
+            else -> 8000
         }
 
         for ((layer, type) in layersToRender) {
