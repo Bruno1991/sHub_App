@@ -21,6 +21,11 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
 
     fun getDatabase(): SQLiteDatabase? = db
 
+    fun getWriter(): GpkgWriter? {
+        val database = db ?: return null
+        return GpkgWriter(database)
+    }
+
     fun getLayers(): List<String> {
         val database = db ?: return emptyList()
         val layers = mutableListOf<String>()

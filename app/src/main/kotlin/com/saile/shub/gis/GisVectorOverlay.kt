@@ -14,7 +14,8 @@ import org.osmdroid.views.overlay.Overlay
 import kotlin.math.hypot
 
 class GisVectorOverlay(
-    private val onElementTapped: (GisRenderElement) -> Unit
+    private val onElementTapped: (GisRenderElement) -> Unit,
+    var onElementLongPressed: ((GisRenderElement) -> Unit)? = null
 ) : Overlay() {
 
     // Lines - Authentic QGIS / QField layer colors
@@ -211,13 +212,10 @@ class GisVectorOverlay(
         }
     }
 
-    override fun onSingleTapConfirmed(e: MotionEvent, mapView: MapView): Boolean {
-        val pj = mapView.projection ?: return false
-        val tapX = e.x
-        val tapY = e.y
-        val touchThreshold = 38.0 // pixels
+    private fun findNearestElement(tapX: Double, tapY: Double, mapView: MapView, touchThreshold: Double = 42.0): GisRenderElement? {
+        val pj = mapView.projection ?: return null
 
-        // Find nearest point first
+        // 1. Check points first (higher touch priority)
         var closestPoint: GisRenderElement.Point? = null
         var closestPointDist = Double.MAX_VALUE
 
@@ -233,28 +231,50 @@ class GisVectorOverlay(
         }
 
         if (closestPoint != null) {
-            selectedFid = closestPoint.fid
-            onElementTapped(closestPoint)
-            return true
+            return closestPoint
         }
 
-        // Find nearest line
+        // 2. Check lines
+        var closestLine: GisRenderElement.Line? = null
+        var closestLineDist = Double.MAX_VALUE
         for (elem in currentElements) {
             if (elem is GisRenderElement.Line) {
                 val pts = elem.points
                 for (i in 0 until pts.size - 1) {
                     pj.toPixels(GeoPoint(pts[i].first, pts[i].second), p1)
                     pj.toPixels(GeoPoint(pts[i + 1].first, pts[i + 1].second), p2)
-                    val dist = distanceToSegment(tapX.toDouble(), tapY.toDouble(), p1.x.toDouble(), p1.y.toDouble(), p2.x.toDouble(), p2.y.toDouble())
-                    if (dist < touchThreshold) {
-                        selectedFid = elem.fid
-                        onElementTapped(elem)
-                        return true
+                    val dist = distanceToSegment(tapX, tapY, p1.x.toDouble(), p1.y.toDouble(), p2.x.toDouble(), p2.y.toDouble())
+                    if (dist < touchThreshold && dist < closestLineDist) {
+                        closestLine = elem
+                        closestLineDist = dist
                     }
                 }
             }
         }
 
+        return closestLine
+    }
+
+    override fun onSingleTapConfirmed(e: MotionEvent, mapView: MapView): Boolean {
+        val hit = findNearestElement(e.x.toDouble(), e.y.toDouble(), mapView)
+        if (hit != null) {
+            selectedFid = hit.fid
+            onElementTapped(hit)
+            return true
+        }
+        return false
+    }
+
+    override fun onLongPress(e: MotionEvent, mapView: MapView): Boolean {
+        val hit = findNearestElement(e.x.toDouble(), e.y.toDouble(), mapView, touchThreshold = 48.0)
+        if (hit != null) {
+            selectedFid = hit.fid
+            val callback = onElementLongPressed
+            if (callback != null) {
+                callback(hit)
+                return true
+            }
+        }
         return false
     }
 
