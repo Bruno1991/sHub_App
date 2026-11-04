@@ -23,6 +23,7 @@ import com.saile.shub.gis.usecase.SearchItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -107,6 +108,18 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     private val _zoomToExtentEvent = MutableSharedFlow<BoundingBox>(replay = 1, extraBufferCapacity = 1)
     val zoomToExtentEvent: SharedFlow<BoundingBox> = _zoomToExtentEvent.asSharedFlow()
 
+    private val _activeMbtilesMetadata = MutableStateFlow<MbtilesMetadata?>(null)
+    val activeMbtilesMetadata: StateFlow<MbtilesMetadata?> = _activeMbtilesMetadata.asStateFlow()
+
+    private val _availableMbtiles = MutableStateFlow<List<MbtilesMetadata>>(emptyList())
+    val availableMbtiles: StateFlow<List<MbtilesMetadata>> = _availableMbtiles.asStateFlow()
+
+    private val _isImportingMbtiles = MutableStateFlow(false)
+    val isImportingMbtiles: StateFlow<Boolean> = _isImportingMbtiles.asStateFlow()
+
+    private val _mbtilesImportProgress = MutableStateFlow(0)
+    val mbtilesImportProgress: StateFlow<Int> = _mbtilesImportProgress.asStateFlow()
+
     private val _offlineMbtilesPath = MutableStateFlow<String?>(null)
     val offlineMbtilesPath: StateFlow<String?> = _offlineMbtilesPath.asStateFlow()
 
@@ -142,7 +155,7 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     init {
         viewModelScope.launch(Dispatchers.IO) {
             loadActiveDataset(autoZoom = true)
-            checkForOfflineMbtiles()
+            refreshAvailableMbtiles()
         }
     }
 
@@ -289,25 +302,53 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         _zoomToExtentEvent.tryEmit(extent)
     }
 
-    private fun checkForOfflineMbtiles() {
-        val searchDirs = listOf(
-            File("/sdcard/Download"),
-            File("/sdcard/Documents"),
-            File("/sdcard/s_hub"),
-            File("/sdcard/s_hub/maps"),
-            File(getApplication<Application>().filesDir, "mbtiles"),
-            getApplication<Application>().getExternalFilesDir(null)
-        )
-
-        for (dir in searchDirs) {
-            if (dir != null && dir.exists()) {
-                val found = dir.listFiles { f -> f.extension.equals("mbtiles", ignoreCase = true) }?.firstOrNull()
-                if (found != null && found.exists()) {
-                    _offlineMbtilesPath.value = found.absolutePath
-                    return
-                }
+    fun refreshAvailableMbtiles() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val list = GisMbtilesHelper.scanAvailableMbtiles(getApplication())
+            _availableMbtiles.value = list
+            if (_activeMbtilesMetadata.value == null && list.isNotEmpty()) {
+                _activeMbtilesMetadata.value = list.first()
+                _offlineMbtilesPath.value = list.first().file.absolutePath
             }
         }
+    }
+
+    fun selectMbtiles(meta: MbtilesMetadata) {
+        _activeMbtilesMetadata.value = meta
+        _offlineMbtilesPath.value = meta.file.absolutePath
+        _currentBasemap.value = BasemapType.OFFLINE_MBTILES
+    }
+
+    fun importMbtilesUri(uri: Uri, onResult: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            _isImportingMbtiles.value = true
+            _mbtilesImportProgress.value = 0
+            val meta = withContext(Dispatchers.IO) {
+                GisMbtilesHelper.importMbtilesFromUri(
+                    context = getApplication(),
+                    uri = uri,
+                    onProgress = { percent, _, _ ->
+                        _mbtilesImportProgress.value = percent
+                    }
+                )
+            }
+            _isImportingMbtiles.value = false
+            if (meta != null) {
+                refreshAvailableMbtiles()
+                _activeMbtilesMetadata.value = meta
+                _offlineMbtilesPath.value = meta.file.absolutePath
+                _currentBasemap.value = BasemapType.OFFLINE_MBTILES
+                meta.bounds?.let { _zoomToExtentEvent.tryEmit(it) }
+                onResult(true)
+            } else {
+                onResult(false)
+            }
+        }
+    }
+
+    fun zoomToMbtilesExtent() {
+        val bounds = _activeMbtilesMetadata.value?.bounds ?: return
+        _zoomToExtentEvent.tryEmit(bounds)
     }
 
     fun onViewportChanged(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, zoom: Double) {

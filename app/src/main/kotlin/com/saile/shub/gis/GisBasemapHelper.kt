@@ -6,11 +6,12 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.MapTileIndex
 
 enum class BasemapType(val displayName: String, val subtitle: String) {
-    GOOGLE_HYBRID("Google Satélite Híbrido", "Satélite de alta resolução com vias e rótulos"),
-    GOOGLE_SATELLITE("Google Satélite Puro", "Imagens aéreas limpas de alta resolução"),
-    ESRI_SATELLITE("Esri World Imagery", "Satélite global de alta definição ArcGIS"),
-    STREETS("Mapa de Ruas (OSM)", "Vias, edificações e mapa cartográfico"),
-    TOPO("Topografia e Relevo", "Curvas de nível e relevo sombreado OpenTopoMap")
+    GOOGLE_HYBRID("Google Satélite Híbrido", "Satélite com vias e rótulos (Online / Cache)"),
+    GOOGLE_SATELLITE("Google Satélite Puro", "Imagens aéreas de alta definição (Online / Cache)"),
+    OFFLINE_MBTILES("MBTiles Offline (Local)", "Pacote raster de satélite/mapa 100% offline"),
+    ESRI_SATELLITE("Esri World Imagery", "Satélite global de alta definição ArcGIS (Online / Cache)"),
+    STREETS("Mapa de Ruas (OSM)", "Vias, edificações e mapa cartográfico (Online / Cache)"),
+    TOPO("Topografia e Relevo", "Curvas de nível e relevo sombreado OpenTopoMap (Online / Cache)")
 }
 
 object GisTileSources {
@@ -100,6 +101,7 @@ object GisTileSources {
             BasemapType.ESRI_SATELLITE -> ESRI_SATELLITE
             BasemapType.STREETS -> TileSourceFactory.MAPNIK
             BasemapType.TOPO -> OPEN_TOPO
+            BasemapType.OFFLINE_MBTILES -> TileSourceFactory.MAPNIK
         }
     }
 }

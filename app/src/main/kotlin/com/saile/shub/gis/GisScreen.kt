@@ -57,6 +57,7 @@ import com.saile.shub.gis.domain.GisElementType
 import com.saile.shub.gis.usecase.ImportProgress
 import org.json.JSONObject
 import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.MapTileProviderBasic
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
@@ -86,6 +87,18 @@ fun GisScreen(
     val availableLayers by viewModel.availableLayers.collectAsState()
     val enabledLayers by viewModel.enabledLayers.collectAsState()
     val currentBasemap by viewModel.currentBasemap.collectAsState()
+    val activeMbtilesMetadata by viewModel.activeMbtilesMetadata.collectAsState()
+    val availableMbtiles by viewModel.availableMbtiles.collectAsState()
+    val isImportingMbtiles by viewModel.isImportingMbtiles.collectAsState()
+    val mbtilesImportProgress by viewModel.mbtilesImportProgress.collectAsState()
+
+    val mbtilesLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.importMbtilesUri(uri)
+        }
+    }
 
     val isReticleVisible by viewModel.isReticleVisible.collectAsState()
     val isMeasurementMode by viewModel.isMeasurementMode.collectAsState()
@@ -198,10 +211,25 @@ fun GisScreen(
         osmConfig.expirationExtendedDuration = 1000L * 60L * 60L * 24L * 365L * 10L // 10 years
     }
 
-    // Dynamic Basemap Switcher (Google Satellite, Hybrid, Esri, OSM, Topo)
-    LaunchedEffect(currentBasemap, mapViewRef) {
+    // Dynamic Basemap Switcher (Google Satellite, Hybrid, Esri, OSM, Topo, MBTiles)
+    LaunchedEffect(currentBasemap, activeMbtilesMetadata, mapViewRef) {
         val map = mapViewRef ?: return@LaunchedEffect
-        map.setTileSource(GisTileSources.getTileSource(currentBasemap))
+        if (currentBasemap == BasemapType.OFFLINE_MBTILES) {
+            val meta = activeMbtilesMetadata
+            if (meta != null) {
+                runCatching {
+                    val provider = GisMbtilesHelper.createTileProvider(context, meta)
+                    map.setTileProvider(provider)
+                }
+            }
+        } else {
+            runCatching {
+                if (map.tileProvider !is MapTileProviderBasic) {
+                    map.setTileProvider(MapTileProviderBasic(context))
+                }
+                map.setTileSource(GisTileSources.getTileSource(currentBasemap))
+            }
+        }
         map.invalidate()
     }
 
@@ -548,6 +576,15 @@ fun GisScreen(
                             }
                         )
                         NavigationDrawerItem(
+                            icon = { Icon(Icons.Filled.Archive, contentDescription = null) },
+                            label = { Text("Importar MBTiles Offline") },
+                            selected = false,
+                            onClick = {
+                                coroutineScope.launch { drawerState.close() }
+                                mbtilesLauncher.launch(arrayOf("*/*"))
+                            }
+                        )
+                        NavigationDrawerItem(
                             icon = { Icon(Icons.Filled.FileUpload, contentDescription = null) },
                             label = { Text("Importar Outro GeoPackage") },
                             selected = false,
@@ -720,7 +757,11 @@ fun GisScreen(
                         MapView(ctx).apply {
                             setMultiTouchControls(true)
                             isTilesScaledToDpi = true
-                            setTileSource(GisTileSources.getTileSource(viewModel.currentBasemap.value))
+                            if (viewModel.currentBasemap.value == BasemapType.OFFLINE_MBTILES && viewModel.activeMbtilesMetadata.value != null) {
+                                setTileProvider(GisMbtilesHelper.createTileProvider(ctx, viewModel.activeMbtilesMetadata.value!!))
+                            } else {
+                                setTileSource(GisTileSources.getTileSource(viewModel.currentBasemap.value))
+                            }
                             controller.setZoom(8.5)
                             controller.setCenter(GeoPoint(-10.828, -63.284))
 
@@ -1201,6 +1242,24 @@ fun GisScreen(
                         }
                     }
                 }
+
+                // 10. MBTiles Import Progress Banner
+                if (isImportingMbtiles) {
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                        modifier = Modifier.fillMaxWidth().padding(12.dp).align(Alignment.TopCenter)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Text("Importando pacote MBTiles... $mbtilesImportProgress%", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
             }
         }
     }
@@ -1240,7 +1299,7 @@ fun GisScreen(
         )
     }
 
-    // Dialog: Basemap Selection (Google Satellite Hybrid, Pure, Esri, OSM, Topo)
+    // Dialog: Basemap Selection (Google Satellite Hybrid, Pure, MBTiles, Esri, OSM, Topo)
     if (showBasemapDialog) {
         AlertDialog(
             onDismissRequest = { showBasemapDialog = false },
@@ -1252,46 +1311,165 @@ fun GisScreen(
                 }
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    BasemapType.values().forEach { type ->
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 440.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(BasemapType.values()) { type ->
                         val isSelected = currentBasemap == type
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
                                     viewModel.setBasemap(type)
-                                    showBasemapDialog = false
-                                }
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = isSelected,
-                                    onClick = {
-                                        viewModel.setBasemap(type)
+                                    if (type != BasemapType.OFFLINE_MBTILES) {
                                         showBasemapDialog = false
                                     }
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = type.displayName,
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                        )
+                                }
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = isSelected,
+                                        onClick = {
+                                            viewModel.setBasemap(type)
+                                            if (type != BasemapType.OFFLINE_MBTILES) {
+                                                showBasemapDialog = false
+                                            }
+                                        }
                                     )
-                                    Text(
-                                        text = type.subtitle,
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = type.displayName,
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                            )
                                         )
-                                    )
+                                        Text(
+                                            text = type.subtitle,
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        )
+                                    }
+                                }
+
+                                // Dedicated MBTiles Controls
+                                if (type == BasemapType.OFFLINE_MBTILES) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    if (activeMbtilesMetadata != null) {
+                                        val meta = activeMbtilesMetadata!!
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = MaterialTheme.colorScheme.surface,
+                                            tonalElevation = 2.dp,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Column(modifier = Modifier.padding(10.dp)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = "📦 ${meta.file.name}",
+                                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                    Text(
+                                                        text = meta.formattedSize,
+                                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(
+                                                    text = "Camada: ${meta.name} • Formato: ${meta.format.uppercase()} • Zooms: ${meta.minZoom} a ${meta.maxZoom}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = Color.Gray
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        Text(
+                                            text = "Nenhum arquivo .mbtiles ativo. Importe um arquivo do aparelho.",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color.Gray,
+                                            modifier = Modifier.padding(horizontal = 4.dp)
+                                        )
+                                    }
+
+                                    // Action buttons for MBTiles
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 8.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                mbtilesLauncher.launch(arrayOf("*/*"))
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                            modifier = Modifier.height(34.dp)
+                                        ) {
+                                            Icon(Icons.Filled.Archive, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(if (activeMbtilesMetadata == null) "Importar .mbtiles" else "Trocar Arquivo", style = MaterialTheme.typography.labelSmall)
+                                        }
+
+                                        if (activeMbtilesMetadata?.bounds != null) {
+                                            FilledTonalButton(
+                                                onClick = {
+                                                    viewModel.zoomToMbtilesExtent()
+                                                    showBasemapDialog = false
+                                                },
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                modifier = Modifier.height(34.dp)
+                                            ) {
+                                                Icon(Icons.Filled.ZoomOutMap, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("Ver Extensão", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
+                                    }
+
+                                    // List other available local MBTiles if any
+                                    if (availableMbtiles.size > 1) {
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Text(
+                                            text = "Outros pacotes detectados no aparelho:",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold)
+                                        )
+                                        availableMbtiles.filter { it.file.absolutePath != activeMbtilesMetadata?.file?.absolutePath }.forEach { other ->
+                                            TextButton(
+                                                onClick = {
+                                                    viewModel.selectMbtiles(other)
+                                                },
+                                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(
+                                                    text = "📁 ${other.file.name} (${other.formattedSize})",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
