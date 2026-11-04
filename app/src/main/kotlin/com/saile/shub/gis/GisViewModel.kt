@@ -159,6 +159,19 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                     Log.w("ShubGis", "loadActiveDataset: could not open reader for ${file.absolutePath}")
                     return@launch
                 }
+
+                // Ensure high-performance SQLite search indexes exist in the background (sub-1ms lookup like QField)
+                viewModelScope.launch(Dispatchers.IO) {
+                    runCatching {
+                        val count = reader.createSearchIndexes()
+                        if (count > 0) {
+                            Log.i("ShubGis", "Search B-Tree indexes verified/created: $count indexes")
+                        }
+                    }.onFailure { e ->
+                        Log.w("ShubGis", "Index creation notice: ${e.message}")
+                    }
+                }
+
                 val extent = reader.getDatasetExtent()
                 val layers = reader.getLayerSummaries()
 

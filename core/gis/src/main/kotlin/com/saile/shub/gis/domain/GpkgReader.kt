@@ -16,6 +16,25 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
 class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
+    companion object {
+        fun getLayerColor(type: GisElementType): String {
+            return when (type) {
+                GisElementType.SUBSTATION -> "#00F200"
+                GisElementType.SPAN_AT -> "#FC07E3"
+                GisElementType.SPAN_MT -> "#052EF9"
+                GisElementType.SPAN_BT -> "#19F805"
+                GisElementType.TRANSFORMER -> "#0B0503"
+                GisElementType.SWITCH, GisElementType.SWITCH_NF -> "#FB0313"
+                GisElementType.SWITCH_NA -> "#00C853"
+                GisElementType.REGULATOR -> "#F59207"
+                GisElementType.CAPACITOR -> "#01DDFF"
+                GisElementType.TOWER -> "#FFFFFF"
+                GisElementType.POLE -> "#FFFFFF"
+                else -> "#9E9E9E"
+            }
+        }
+    }
+
     private var db: SQLiteDatabase? = null
 
     // Thread-safe in-memory caches to make metadata lookups and searches instantaneous
@@ -227,19 +246,7 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
         for (layer in getLayers()) {
             val count = getLayerFeatureCount(layer)
             val type = classifyLayer(layer)
-            val color = when (type) {
-                GisElementType.SUBSTATION -> "#00F200"
-                GisElementType.SPAN_AT -> "#FC07E3"
-                GisElementType.SPAN_MT -> "#052EF9"
-                GisElementType.SPAN_BT -> "#19F805"
-                GisElementType.TRANSFORMER -> "#0B0503"
-                GisElementType.SWITCH -> "#FB0313"
-                GisElementType.REGULATOR -> "#F59207"
-                GisElementType.CAPACITOR -> "#01DDFF"
-                GisElementType.TOWER -> "#FFFFFF"
-                GisElementType.POLE -> "#FFFFFF"
-                else -> "#9E9E9E"
-            }
+            val color = getLayerColor(type)
             val (geomCol, _) = getGeometryInfo(layer)
             val hasRtree = hasRtreeIndex(layer, geomCol)
             list.add(GisLayerSummary(type = type, name = layer, featureCount = count, colorHex = color, hasRtree = hasRtree))
@@ -531,18 +538,21 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
             }
             val type = classifyLayer(layer)
 
-            // Scale-dependent visibility rules:
-            // High & Medium voltage lines, substations and towers are visible at all scales.
-            // Transformers, switches and capacitors appear at regional scale (>= 7.5).
-            // Low-voltage lines appear at local scale (>= 8.0).
-            // Distribution poles appear at neighborhood scale (>= 8.5).
+            // Scale-dependent visibility rules (optimized like QField / QGIS for high FPS):
+            // - Substations and High Voltage transmission lines (AT) are visible at all scales (regional).
+            // - Medium voltage lines (MT) and towers appear at intermunicipal scale (>= 8.5).
+            // - Transformers, switches (NF/NA), regulators, capacitors appear at local scale (>= 11.5).
+            // - Low-voltage lines (BT) appear at street scale (>= 13.0).
+            // - Distribution poles appear at street/block scale (>= 13.5).
             val shouldRender = when (type) {
-                GisElementType.SUBSTATION, GisElementType.TOWER, GisElementType.SPAN_AT, GisElementType.SPAN_MT -> true
-                GisElementType.TRANSFORMER, GisElementType.SWITCH, GisElementType.REGULATOR,
-                GisElementType.CAPACITOR -> zoomLevel >= 7.5
-                GisElementType.SPAN_BT -> zoomLevel >= 8.0
-                GisElementType.POLE -> zoomLevel >= 8.5
-                else -> zoomLevel >= 8.5
+                GisElementType.SUBSTATION, GisElementType.SPAN_AT -> true
+                GisElementType.SPAN_MT, GisElementType.TOWER -> zoomLevel >= 8.5
+                GisElementType.TRANSFORMER, GisElementType.SWITCH, GisElementType.SWITCH_NF,
+                GisElementType.SWITCH_NA, GisElementType.REGULATOR,
+                GisElementType.CAPACITOR -> zoomLevel >= 11.5
+                GisElementType.SPAN_BT -> zoomLevel >= 13.0
+                GisElementType.POLE -> zoomLevel >= 13.5
+                else -> zoomLevel >= 13.5
             }
 
             if (shouldRender) {
@@ -576,10 +586,10 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
         }.getOrNull()
 
         val queryLimit = when {
-            zoomLevel >= 14.0 -> 8000
-            zoomLevel >= 12.0 -> 10000
-            zoomLevel >= 10.0 -> 12000
-            else -> 8000
+            zoomLevel >= 14.0 -> maxPerLayer.coerceAtMost(8000)
+            zoomLevel >= 12.0 -> 3500
+            zoomLevel >= 10.0 -> 1500
+            else -> 600
         }
 
         for ((layer, type) in layersToRender) {
@@ -708,6 +718,23 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                 val finalTitle = title ?: "$layer #$fid"
                 val metaJson = props.toString()
 
+                val rowType = if (type == GisElementType.SWITCH) {
+                    val styleSubc = props.optString("STYLE_SUBC", "") + " " + props.optString("STYLE_SUBC_2", "")
+                    val normalSta = props.optString("NORMAL_STA", "")
+                    val posicaoNa = props.optString("POSICAO_NA", "") + " " + props.optString("POSIÇÃO_NA", "")
+                    val isNa = styleSubc.contains(",NA", ignoreCase = true) ||
+                               styleSubc.contains(" NA", ignoreCase = true) ||
+                               styleSubc.endsWith("NA", ignoreCase = true) ||
+                               normalSta.contains("OPEN", ignoreCase = true) ||
+                               normalSta.contains("ABERTA", ignoreCase = true) ||
+                               posicaoNa.contains("SIM", ignoreCase = true) ||
+                               posicaoNa.contains("TRUE", ignoreCase = true) ||
+                               finalTitle.contains(" NA", ignoreCase = true)
+                    if (isNa) GisElementType.SWITCH_NA else GisElementType.SWITCH_NF
+                } else {
+                    type
+                }
+
                 when (parsedGeom) {
                     is ParsedGeometry.Point -> {
                         elements.add(
@@ -715,7 +742,7 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                                 fid = fid,
                                 layerName = layer,
                                 title = finalTitle,
-                                type = type,
+                                type = rowType,
                                 metadataJson = metaJson,
                                 latitude = parsedGeom.lat,
                                 longitude = parsedGeom.lon
@@ -730,7 +757,7 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                                     fid = fid,
                                     layerName = layer,
                                     title = finalTitle,
-                                    type = type,
+                                    type = rowType,
                                     metadataJson = metaJson,
                                     latitude = pt.first,
                                     longitude = pt.second
@@ -745,7 +772,7 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                                 fid = fid,
                                 layerName = layer,
                                 title = finalTitle,
-                                type = type,
+                                type = rowType,
                                 metadataJson = metaJson,
                                 points = parsedGeom.points
                             )
@@ -759,7 +786,7 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                                     fid = fid,
                                     layerName = layer,
                                     title = finalTitle,
-                                    type = type,
+                                    type = rowType,
                                     metadataJson = metaJson,
                                     points = linePts
                                 )

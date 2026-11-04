@@ -34,12 +34,25 @@ object GisSymbolProvider {
         </svg>
     """.trimIndent()
 
-    private val SWITCH_SVG = """
+    private val SWITCH_NF_SVG = """
         <svg viewBox="0 0 48 48" width="48" height="48" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="24" cy="24" r="21" fill="#D50000" stroke="#FFFFFF" stroke-width="4"/>
-          <circle cx="14" cy="24" r="3.5" fill="#FFFFFF"/>
-          <circle cx="34" cy="24" r="3.5" fill="#FFFFFF"/>
-          <line x1="14" y1="24" x2="31" y2="15" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round"/>
+          <circle cx="24" cy="24" r="21" fill="#D50000" stroke="#FFFFFF" stroke-width="3.5"/>
+          <circle cx="13" cy="24" r="4" fill="#FFFFFF"/>
+          <circle cx="35" cy="24" r="4" fill="#FFFFFF"/>
+          <line x1="13" y1="20" x2="13" y2="28" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="35" y1="20" x2="35" y2="28" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="13" y1="24" x2="35" y2="24" stroke="#FFFFFF" stroke-width="4.5" stroke-linecap="round"/>
+        </svg>
+    """.trimIndent()
+
+    private val SWITCH_NA_SVG = """
+        <svg viewBox="0 0 48 48" width="48" height="48" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="24" cy="24" r="21" fill="#00C853" stroke="#FFFFFF" stroke-width="3.5"/>
+          <circle cx="13" cy="24" r="4" fill="#FFFFFF"/>
+          <circle cx="35" cy="24" r="4" fill="#FFFFFF"/>
+          <line x1="13" y1="20" x2="13" y2="28" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="35" y1="20" x2="35" y2="28" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="13" y1="24" x2="30" y2="10" stroke="#FFFFFF" stroke-width="4.5" stroke-linecap="round"/>
         </svg>
     """.trimIndent()
 
@@ -69,10 +82,10 @@ object GisSymbolProvider {
         </svg>
     """.trimIndent()
 
-    private val POLE_SVG = """
+    // Authentic concrete Double-T pole profile (Poste Duplo T - ABNT / Concessionárias)
+    private val POLE_DT_SVG = """
         <svg viewBox="0 0 32 32" width="32" height="32" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="16" cy="16" r="13" fill="#FFFFFF" stroke="#212121" stroke-width="3.5"/>
-          <circle cx="16" cy="16" r="4.5" fill="#212121"/>
+          <path d="M 6 6 H 26 V 11 H 19 V 21 H 26 V 26 H 6 V 21 H 13 V 11 H 6 Z" fill="#FFFFFF" stroke="#212121" stroke-width="2.5" stroke-linejoin="round"/>
         </svg>
     """.trimIndent()
 
@@ -88,22 +101,24 @@ object GisSymbolProvider {
         if (density != currentDensity) {
             initIcons(density)
         }
-        return iconCache[type] ?: iconCache[GisElementType.OTHER]
+        return iconCache[type] ?: iconCache[GisElementType.SWITCH]?.takeIf { type == GisElementType.SWITCH_NF || type == GisElementType.SWITCH_NA } ?: iconCache[GisElementType.OTHER]
     }
 
     private fun initIcons(density: Float) {
         currentDensity = density
         iconCache.clear()
 
-        // Base display sizes in dp
+        // Base display sizes in dp (optimized for clear map readability)
         val sizeMap = mapOf(
             GisElementType.SUBSTATION to (26f to SUBSTATION_SVG),
             GisElementType.TRANSFORMER to (19f to TRANSFORMER_SVG),
-            GisElementType.SWITCH to (18f to SWITCH_SVG),
+            GisElementType.SWITCH to (18f to SWITCH_NF_SVG),
+            GisElementType.SWITCH_NF to (18f to SWITCH_NF_SVG),
+            GisElementType.SWITCH_NA to (18f to SWITCH_NA_SVG),
             GisElementType.REGULATOR to (18f to REGULATOR_SVG),
             GisElementType.CAPACITOR to (18f to CAPACITOR_SVG),
             GisElementType.TOWER to (21f to TOWER_SVG),
-            GisElementType.POLE to (11f to POLE_SVG),
+            GisElementType.POLE to (14f to POLE_DT_SVG),
             GisElementType.OTHER to (11f to OTHER_SVG)
         )
 
@@ -139,3 +154,4 @@ object GisSymbolProvider {
         }
     }
 }
+

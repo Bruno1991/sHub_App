@@ -4,6 +4,8 @@ enum class GisElementType {
     POLE,
     TRANSFORMER,
     SWITCH,
+    SWITCH_NF,
+    SWITCH_NA,
     SUBSTATION,
     TOWER,
     REGULATOR,
