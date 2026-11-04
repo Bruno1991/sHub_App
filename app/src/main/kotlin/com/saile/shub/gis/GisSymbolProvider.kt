@@ -28,9 +28,14 @@ object GisSymbolProvider {
 
     private val TRANSFORMER_SVG = """
         <svg viewBox="0 0 48 48" width="48" height="48" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="24" cy="24" r="21" fill="#1C1B1F" stroke="#FFFFFF" stroke-width="4"/>
-          <circle cx="18" cy="24" r="8.5" fill="none" stroke="#FFD600" stroke-width="3"/>
-          <circle cx="30" cy="24" r="8.5" fill="none" stroke="#FFD600" stroke-width="3"/>
+          <circle cx="24" cy="24" r="21" fill="#1C1B1F" stroke="#FFFFFF" stroke-width="3.5"/>
+          <!-- Núcleo magnético laminado central -->
+          <line x1="22.5" y1="12" x2="22.5" y2="36" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+          <line x1="25.5" y1="12" x2="25.5" y2="36" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+          <!-- Bobina Esquerda (MT): espiras curvadas em direção ao núcleo -->
+          <path d="M 13 12 C 20 12, 20 18, 13 18 C 20 18, 20 24, 13 24 C 20 24, 20 30, 13 30 C 20 30, 20 36, 13 36" fill="none" stroke="#FFD600" stroke-width="2.8" stroke-linecap="round"/>
+          <!-- Bobina Direita (BT): espiras curvadas em direção ao núcleo -->
+          <path d="M 35 12 C 28 12, 28 18, 35 18 C 28 18, 28 24, 35 24 C 28 24, 28 30, 35 30 C 28 30, 28 36, 35 36" fill="none" stroke="#FFD600" stroke-width="2.8" stroke-linecap="round"/>
         </svg>
     """.trimIndent()
 
@@ -56,29 +61,46 @@ object GisSymbolProvider {
         </svg>
     """.trimIndent()
 
+    // Regulador de Tensão comutador de TAP sob carga: Badge RT com setas Buck / Boost
     private val REGULATOR_SVG = """
         <svg viewBox="0 0 48 48" width="48" height="48" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="24" cy="24" r="21" fill="#FF6D00" stroke="#FFFFFF" stroke-width="4"/>
-          <path d="M 18 14 L 18 34 M 18 14 L 26 14 C 30 14 32 17 32 20 C 32 23 30 26 26 26 L 18 26 M 25 26 L 31 34" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <circle cx="24" cy="24" r="21" fill="#FF6D00" stroke="#FFFFFF" stroke-width="3.5"/>
+          <!-- Letra R -->
+          <path d="M 16 17 V 31 M 16 17 H 21 C 24 17 24 23 21 23 H 16 M 20 23 L 24 31" fill="none" stroke="#FFFFFF" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+          <!-- Letra T -->
+          <path d="M 26 17 H 34 M 30 17 V 31" fill="none" stroke="#FFFFFF" stroke-width="2.8" stroke-linecap="round"/>
+          <!-- Setas de Elevação (Boost) e Rebaixamento (Buck) de Tensão -->
+          <path d="M 19 12 L 24 8 L 29 12 M 19 36 L 24 40 L 29 36" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
     """.trimIndent()
 
+    // Banco de Capacitores em Média Tensão: Placas Verticais em Linha
     private val CAPACITOR_SVG = """
         <svg viewBox="0 0 48 48" width="48" height="48" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="24" cy="24" r="21" fill="#0091EA" stroke="#FFFFFF" stroke-width="4"/>
-          <line x1="12" y1="24" x2="20" y2="24" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round"/>
-          <line x1="20" y1="14" x2="20" y2="34" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round"/>
-          <line x1="28" y1="14" x2="28" y2="34" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round"/>
-          <line x1="28" y1="24" x2="36" y2="24" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round"/>
+          <circle cx="24" cy="24" r="21" fill="#0091EA" stroke="#FFFFFF" stroke-width="3.5"/>
+          <line x1="10" y1="24" x2="20" y2="24" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round"/>
+          <line x1="20" y1="13" x2="20" y2="35" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+          <line x1="28" y1="13" x2="28" y2="35" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+          <line x1="28" y1="24" x2="38" y2="24" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round"/>
         </svg>
     """.trimIndent()
 
+    // Torre de Transmissão (Linhas AT): Treliça Metálica Autoportante com Cruzetas
     private val TOWER_SVG = """
         <svg viewBox="0 0 48 48" width="48" height="48" xmlns="http://www.w3.org/2000/svg">
-          <polygon points="24,4 43,43 5,43" fill="#ECEFF1" stroke="#212121" stroke-width="3.5"/>
-          <line x1="13" y1="29" x2="35" y2="29" stroke="#212121" stroke-width="2.5"/>
-          <line x1="18" y1="19" x2="30" y2="19" stroke="#212121" stroke-width="2.5"/>
-          <line x1="24" y1="4" x2="24" y2="43" stroke="#212121" stroke-width="2"/>
+          <circle cx="24" cy="24" r="21" fill="#212121" stroke="#FFFFFF" stroke-width="3"/>
+          <!-- Ponta para cabo OPGW / para-raios -->
+          <line x1="24" y1="8" x2="24" y2="13" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
+          <!-- Braços / Cruzeta da torre (suporte das cadeias de isoladores) -->
+          <line x1="10" y1="17" x2="38" y2="17" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round"/>
+          <line x1="13" y1="23" x2="35" y2="23" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
+          <!-- Tronco piramidal da torre -->
+          <path d="M 24 13 L 15 39 M 24 13 L 33 39" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
+          <!-- Diagonais em X da treliça -->
+          <line x1="17" y1="27" x2="31" y2="35" stroke="#FFFFFF" stroke-width="1.8"/>
+          <line x1="31" y1="27" x2="17" y2="35" stroke="#FFFFFF" stroke-width="1.8"/>
+          <!-- Base dos pés da torre -->
+          <line x1="14" y1="39" x2="34" y2="39" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
         </svg>
     """.trimIndent()
 
