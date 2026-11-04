@@ -303,6 +303,8 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
             zoomLevel = zoom,
             enabledLayers = _enabledLayers.value
         )
+        val count = elements?.size ?: 0
+        Log.i("ShubGis", "queryViewport: bounds=[$minLat, $minLon to $maxLat, $maxLon], zoom=$zoom -> found $count elements")
         _visibleElements.value = elements ?: emptyList()
     }
 

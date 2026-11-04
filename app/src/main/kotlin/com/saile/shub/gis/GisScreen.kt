@@ -205,6 +205,7 @@ fun GisScreen(
             false,
             50
         )
+        kotlinx.coroutines.delay(200)
         val bbox = map.boundingBox
         if (bbox != null) {
             viewModel.onViewportChanged(
@@ -212,6 +213,14 @@ fun GisScreen(
                 maxLat = bbox.latNorth,
                 minLon = bbox.lonWest,
                 maxLon = bbox.lonEast,
+                zoom = map.zoomLevelDouble
+            )
+        } else {
+            viewModel.onViewportChanged(
+                minLat = extent.minLat,
+                maxLat = extent.maxLat,
+                minLon = extent.minLon,
+                maxLon = extent.maxLon,
                 zoom = map.zoomLevelDouble
             )
         }
@@ -225,13 +234,25 @@ fun GisScreen(
                 true,
                 60
             )
-            viewModel.onViewportChanged(
-                minLat = extent.minLat,
-                maxLat = extent.maxLat,
-                minLon = extent.minLon,
-                maxLon = extent.maxLon,
-                zoom = map.zoomLevelDouble
-            )
+            kotlinx.coroutines.delay(250)
+            val bbox = map.boundingBox
+            if (bbox != null) {
+                viewModel.onViewportChanged(
+                    minLat = bbox.latSouth,
+                    maxLat = bbox.latNorth,
+                    minLon = bbox.lonWest,
+                    maxLon = bbox.lonEast,
+                    zoom = map.zoomLevelDouble
+                )
+            } else {
+                viewModel.onViewportChanged(
+                    minLat = extent.minLat,
+                    maxLat = extent.maxLat,
+                    minLon = extent.minLon,
+                    maxLon = extent.maxLon,
+                    zoom = map.zoomLevelDouble
+                )
+            }
         }
     }
 
@@ -796,14 +817,35 @@ fun GisScreen(
                     }
                 }
 
-                // 3. QField Scale Bar (Bottom Left)
-                GisScaleBar(
-                    latitude = centerLat,
-                    zoomLevel = currentZoom,
+                // 3. QField Scale Bar & Center Coordinate HUD (Bottom Left)
+                Column(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(start = 12.dp, bottom = if (interactionMode == GisInteractionMode.DIGITIZE || selectedTarget != null) 210.dp else 24.dp)
-                )
+                        .padding(start = 12.dp, bottom = if (interactionMode == GisInteractionMode.DIGITIZE || selectedTarget != null) 210.dp else 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val centerUtm = remember(centerLat, centerLon) {
+                        UtmConverter.formatUtm(centerLat, centerLon)
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = Color(0xCC000000)
+                    ) {
+                        Text(
+                            text = "UTM: $centerUtm",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            ),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    GisScaleBar(
+                        latitude = centerLat,
+                        zoomLevel = currentZoom
+                    )
+                }
 
                 // 4. Floating Right Toolbar (QField Side Tool Controls)
                 Column(

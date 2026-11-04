@@ -363,30 +363,17 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                 maxY = targetLat + deltaDeg
             }
 
-            // Look up R-Tree table name
-            val rtreeName = "rtree_${layer}_${geomCol}"
-            var hasRtree = false
-            database.rawQuery(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-                arrayOf(rtreeName)
-            ).use { cursor ->
-                if (cursor.moveToFirst()) hasRtree = true
-            }
-
-            if (!hasRtree) continue
-
-            val matchingFids = mutableListOf<Long>()
-            val rtreeSql = "SELECT id FROM \"$rtreeName\" WHERE minx <= ? AND maxx >= ? AND miny <= ? AND maxy >= ? LIMIT 15"
-            runCatching {
-                database.rawQuery(
-                    rtreeSql,
-                    arrayOf(maxX.toString(), minX.toString(), maxY.toString(), minY.toString())
-                ).use { cursor ->
-                    while (cursor.moveToNext()) {
-                        matchingFids.add(cursor.getLong(0))
-                    }
-                }
-            }
+            // Query nearby feature IDs using high-performance SQLite R-Tree shadow reader
+            val matchingFids = GpkgRtreeReader.queryFidsInBoundingBox(
+                db = database,
+                layerName = layer,
+                geomCol = geomCol,
+                minX = minX,
+                maxX = maxX,
+                minY = minY,
+                maxY = maxY,
+                limit = 15
+            )
 
             if (matchingFids.isEmpty()) continue
 
@@ -452,12 +439,18 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
         val safeMinLon = minOf(minLon, maxLon).coerceIn(-179.9, 179.9)
         val safeMaxLon = maxOf(minLon, maxLon).coerceIn(-179.9, 179.9)
 
+        // Clamped bounds for UTM Zone 20 conversion across Rondônia
+        val utmMinLat = safeMinLat.coerceIn(-15.0, -6.5)
+        val utmMaxLat = safeMaxLat.coerceIn(-15.0, -6.5)
+        val utmMinLon = safeMinLon.coerceIn(-67.5, -58.5)
+        val utmMaxLon = safeMaxLon.coerceIn(-67.5, -58.5)
+
         val utmZone = 20 // SIRGAS 2000 / UTM Zone 20S (EPSG 31980) used across Rondonia grid
         val utmCorners = runCatching {
-            val sw = UtmConverter.geoToUtm(GeoCoordinate(safeMinLat, safeMinLon), forcedZone = utmZone)
-            val ne = UtmConverter.geoToUtm(GeoCoordinate(safeMaxLat, safeMaxLon), forcedZone = utmZone)
-            val nw = UtmConverter.geoToUtm(GeoCoordinate(safeMaxLat, safeMinLon), forcedZone = utmZone)
-            val se = UtmConverter.geoToUtm(GeoCoordinate(safeMinLat, safeMaxLon), forcedZone = utmZone)
+            val sw = UtmConverter.geoToUtm(GeoCoordinate(utmMinLat, utmMinLon), forcedZone = utmZone)
+            val ne = UtmConverter.geoToUtm(GeoCoordinate(utmMaxLat, utmMaxLon), forcedZone = utmZone)
+            val nw = UtmConverter.geoToUtm(GeoCoordinate(utmMaxLat, utmMinLon), forcedZone = utmZone)
+            val se = UtmConverter.geoToUtm(GeoCoordinate(utmMinLat, utmMaxLon), forcedZone = utmZone)
             val minE = minOf(sw.easting, ne.easting, nw.easting, se.easting)
             val maxE = maxOf(sw.easting, ne.easting, nw.easting, se.easting)
             val minN = minOf(sw.northing, ne.northing, nw.northing, se.northing)
@@ -474,121 +467,153 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
 
         for ((layer, type) in layersToRender) {
             val (geomCol, srsId) = getGeometryInfo(layer)
-            val rtreeName = "rtree_${layer}_${geomCol}"
+            val isUtm = (srsId == 31980 || srsId in 31960..31985)
 
-            var hasRtree = false
-            database.rawQuery("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", arrayOf(rtreeName)).use {
-                if (it.moveToFirst()) hasRtree = true
-            }
-            if (!hasRtree) continue
-
-            val (qMinX, qMaxX, qMinY, qMaxY) = if (srsId == 31980 || srsId in 31960..31985) {
-                if (utmCorners == null) continue
-                val (ePair, nPair) = utmCorners
-                listOf(ePair.first, ePair.second, nPair.first, nPair.second)
+            val (qMinX, qMaxX, qMinY, qMaxY) = if (isUtm) {
+                if (utmCorners != null) {
+                    val (ePair, nPair) = utmCorners
+                    listOf(ePair.first, ePair.second, nPair.first, nPair.second)
+                } else {
+                    listOf(80000.0, 860000.0, 8480000.0, 9120000.0)
+                }
             } else {
                 listOf(safeMinLon, safeMaxLon, safeMinLat, safeMaxLat)
             }
 
-            val joinSql = "SELECT f.* FROM \"$layer\" f JOIN \"$rtreeName\" r ON f.fid = r.id WHERE r.minx <= ? AND r.maxx >= ? AND r.miny <= ? AND r.maxy >= ? LIMIT $queryLimit"
-            val queryArgs = arrayOf(qMaxX.toString(), qMinX.toString(), qMaxY.toString(), qMinY.toString())
+            val matchingFids = GpkgRtreeReader.queryFidsInBoundingBox(
+                db = database,
+                layerName = layer,
+                geomCol = geomCol,
+                minX = qMinX,
+                maxX = qMaxX,
+                minY = qMinY,
+                maxY = qMaxY,
+                limit = queryLimit
+            )
 
-            runCatching {
-                database.rawQuery(joinSql, queryArgs).use { cursor ->
-                    val colNames = cursor.columnNames
-                    val geomIdx = colNames.indexOf(geomCol)
-                    val fidIdx = colNames.indexOfFirst { it.equals("fid", ignoreCase = true) || it.equals("id", ignoreCase = true) }
+            val count = getLayerFeatureCount(layer)
 
-                    while (cursor.moveToNext()) {
-                        val fid = if (fidIdx >= 0) cursor.getLong(fidIdx) else cursor.position.toLong()
-                        if (geomIdx < 0 || cursor.isNull(geomIdx)) continue
-                        val geomBlob = cursor.getBlob(geomIdx)
-
-                        val parsedGeom = GeometryHeaderParser.parseGeometry(geomBlob) ?: continue
-
-                        var title: String? = null
-                        val props = JSONObject()
-                        for (i in 0 until cursor.columnCount) {
-                            if (i != geomIdx) {
-                                val cName = colNames[i]
-                                val v = cursor.getString(i)
-                                if (!v.isNullOrBlank() && v != "null") {
-                                    props.put(cName, v)
-                                    val cl = cName.lowercase(Locale.ROOT)
-                                    if (title == null && (cl.contains("nome") || cl.contains("name") || cl.contains("numero") || cl.contains("codigo") || cl.contains("sigla") || cl.contains("circuito"))) {
-                                        title = v
-                                    }
-                                }
-                            }
+            if (matchingFids.isNotEmpty()) {
+                for (chunk in matchingFids.chunked(500)) {
+                    val placeholders = chunk.joinToString(",") { "?" }
+                    val fetchSql = "SELECT * FROM \"$layer\" WHERE fid IN ($placeholders)"
+                    val args = chunk.map { it.toString() }.toTypedArray()
+                    runCatching {
+                        database.rawQuery(fetchSql, args).use { cursor ->
+                            extractRenderElementsFromCursor(cursor, layer, type, geomCol, elements)
                         }
-                        val finalTitle = title ?: "$layer #$fid"
-                        val metaJson = props.toString()
-
-                        when (parsedGeom) {
-                            is ParsedGeometry.Point -> {
-                                elements.add(
-                                    GisRenderElement.Point(
-                                        fid = fid,
-                                        layerName = layer,
-                                        title = finalTitle,
-                                        type = type,
-                                        metadataJson = metaJson,
-                                        latitude = parsedGeom.lat,
-                                        longitude = parsedGeom.lon
-                                    )
-                                )
-                            }
-                            is ParsedGeometry.Line -> {
-                                elements.add(
-                                    GisRenderElement.Line(
-                                        fid = fid,
-                                        layerName = layer,
-                                        title = finalTitle,
-                                        type = type,
-                                        metadataJson = metaJson,
-                                        points = parsedGeom.points
-                                    )
-                                )
-                            }
-                            is ParsedGeometry.MultiLine -> {
-                                for (linePts in parsedGeom.lines) {
-                                    elements.add(
-                                        GisRenderElement.Line(
-                                            fid = fid,
-                                            layerName = layer,
-                                            title = finalTitle,
-                                            type = type,
-                                            metadataJson = metaJson,
-                                            points = linePts
-                                        )
-                                    )
-                                }
-                                if (type == GisElementType.SUBSTATION && parsedGeom.lines.isNotEmpty()) {
-                                    val allPts = parsedGeom.lines.flatten()
-                                    if (allPts.isNotEmpty()) {
-                                        val avgLat = allPts.map { it.first }.average()
-                                        val avgLon = allPts.map { it.second }.average()
-                                        elements.add(
-                                            GisRenderElement.Point(
-                                                fid = fid,
-                                                layerName = layer,
-                                                title = finalTitle,
-                                                type = type,
-                                                metadataJson = metaJson,
-                                                latitude = avgLat,
-                                                longitude = avgLon
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                    }
+                }
+            } else if (count in 1..1000) {
+                // Fallback for small reference layers (e.g. Substations, Regulators, Capacitors)
+                val fetchSql = "SELECT * FROM \"$layer\" LIMIT $queryLimit"
+                runCatching {
+                    database.rawQuery(fetchSql, null).use { cursor ->
+                        extractRenderElementsFromCursor(cursor, layer, type, geomCol, elements)
                     }
                 }
             }
         }
 
         return elements
+    }
+
+    private fun extractRenderElementsFromCursor(
+        cursor: android.database.Cursor,
+        layer: String,
+        type: GisElementType,
+        geomCol: String,
+        elements: MutableList<GisRenderElement>
+    ) {
+        val colNames = cursor.columnNames
+        val geomIdx = colNames.indexOf(geomCol)
+        val fidIdx = colNames.indexOfFirst { it.equals("fid", ignoreCase = true) || it.equals("id", ignoreCase = true) }
+
+        while (cursor.moveToNext()) {
+            val fid = if (fidIdx >= 0) cursor.getLong(fidIdx) else cursor.position.toLong()
+            if (geomIdx < 0 || cursor.isNull(geomIdx)) continue
+            val geomBlob = cursor.getBlob(geomIdx)
+
+            val parsedGeom = GeometryHeaderParser.parseGeometry(geomBlob) ?: continue
+
+            var title: String? = null
+            val props = JSONObject()
+            for (i in 0 until cursor.columnCount) {
+                if (i != geomIdx) {
+                    val cName = colNames[i]
+                    val v = cursor.getString(i)
+                    if (!v.isNullOrBlank() && v != "null") {
+                        props.put(cName, v)
+                        val cl = cName.lowercase(Locale.ROOT)
+                        if (title == null && (cl.contains("nome") || cl.contains("name") || cl.contains("numero") || cl.contains("codigo") || cl.contains("sigla") || cl.contains("circuito"))) {
+                            title = v
+                        }
+                    }
+                }
+            }
+            val finalTitle = title ?: "$layer #$fid"
+            val metaJson = props.toString()
+
+            when (parsedGeom) {
+                is ParsedGeometry.Point -> {
+                    elements.add(
+                        GisRenderElement.Point(
+                            fid = fid,
+                            layerName = layer,
+                            title = finalTitle,
+                            type = type,
+                            metadataJson = metaJson,
+                            latitude = parsedGeom.lat,
+                            longitude = parsedGeom.lon
+                        )
+                    )
+                }
+                is ParsedGeometry.Line -> {
+                    elements.add(
+                        GisRenderElement.Line(
+                            fid = fid,
+                            layerName = layer,
+                            title = finalTitle,
+                            type = type,
+                            metadataJson = metaJson,
+                            points = parsedGeom.points
+                        )
+                    )
+                }
+                is ParsedGeometry.MultiLine -> {
+                    for (linePts in parsedGeom.lines) {
+                        elements.add(
+                            GisRenderElement.Line(
+                                fid = fid,
+                                layerName = layer,
+                                title = finalTitle,
+                                type = type,
+                                metadataJson = metaJson,
+                                points = linePts
+                            )
+                        )
+                    }
+                    if (type == GisElementType.SUBSTATION && parsedGeom.lines.isNotEmpty()) {
+                        val allPts = parsedGeom.lines.flatten()
+                        if (allPts.isNotEmpty()) {
+                            val avgLat = allPts.map { it.first }.average()
+                            val avgLon = allPts.map { it.second }.average()
+                            elements.add(
+                                GisRenderElement.Point(
+                                    fid = fid,
+                                    layerName = layer,
+                                    title = finalTitle,
+                                    type = type,
+                                    metadataJson = metaJson,
+                                    latitude = avgLat,
+                                    longitude = avgLon
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun parseCursorFeatures(
