@@ -53,6 +53,11 @@ enum class GpsTrackingMode {
     FOLLOW_BEARING
 }
 
+enum class GisInteractionMode(val label: String) {
+    BROWSE("Navegar"),
+    DIGITIZE("Digitalizar")
+}
+
 class GisViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = Room.databaseBuilder(
@@ -67,9 +72,19 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow<GisState>(GisState.Idle)
     val state: StateFlow<GisState> = _state.asStateFlow()
 
-    // Basemaps: Default to Satellite
-    private val _currentBasemap = MutableStateFlow(BasemapType.SATELLITE)
+    // Default to Streets/Mapnik for instant offline performance and crisp vector contrast
+    private val _currentBasemap = MutableStateFlow(BasemapType.STREETS)
     val currentBasemap: StateFlow<BasemapType> = _currentBasemap.asStateFlow()
+
+    // QField Interaction Mode: BROWSE vs DIGITIZE
+    private val _interactionMode = MutableStateFlow(GisInteractionMode.BROWSE)
+    val interactionMode: StateFlow<GisInteractionMode> = _interactionMode.asStateFlow()
+
+    private val _activeEditLayer = MutableStateFlow<String?>("BASE ERO – Poste de Distribuição")
+    val activeEditLayer: StateFlow<String?> = _activeEditLayer.asStateFlow()
+
+    private val _isLayersExpanded = MutableStateFlow(true)
+    val isLayersExpanded: StateFlow<Boolean> = _isLayersExpanded.asStateFlow()
 
     private val _selectedTarget = MutableStateFlow<MapTarget?>(null)
     val selectedTarget: StateFlow<MapTarget?> = _selectedTarget.asStateFlow()
@@ -93,16 +108,12 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     val offlineMbtilesPath: StateFlow<String?> = _offlineMbtilesPath.asStateFlow()
 
     // QField Precision Reticle
-    private val _isReticleVisible = MutableStateFlow(false)
+    private val _isReticleVisible = MutableStateFlow(true)
     val isReticleVisible: StateFlow<Boolean> = _isReticleVisible.asStateFlow()
 
     // QField Measurement Tool (Régua de Medição)
     private val _isMeasurementMode = MutableStateFlow(false)
     val isMeasurementMode: StateFlow<Boolean> = _isMeasurementMode.asStateFlow()
-
-    // QField Digitizing / Editing Mode
-    private val _isEditMode = MutableStateFlow(false)
-    val isEditMode: StateFlow<Boolean> = _isEditMode.asStateFlow()
 
     // GNSS / GPS Tracking
     private val _gpsTrackingMode = MutableStateFlow(GpsTrackingMode.OFF)
@@ -126,12 +137,12 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            loadActiveDataset(autoZoom = false)
+            loadActiveDataset(autoZoom = true)
             checkForOfflineMbtiles()
         }
     }
 
-    fun loadActiveDataset(autoZoom: Boolean = false) {
+    fun loadActiveDataset(autoZoom: Boolean = true) {
         viewModelScope.launch(Dispatchers.IO) {
             val file = getActiveGpkgFile() ?: return@launch
             runCatching {
@@ -141,6 +152,10 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
 
                 _datasetExtent.value = extent
                 _availableLayers.value = layers
+
+                if (_activeEditLayer.value == null && layers.isNotEmpty()) {
+                    _activeEditLayer.value = layers.firstOrNull { it.type == GisElementType.POLE }?.name ?: layers.first().name
+                }
 
                 if (autoZoom && extent != null) {
                     _zoomToExtentEvent.tryEmit(extent)
@@ -168,17 +183,28 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         return null
     }
 
-    fun setBasemap(type: BasemapType) {
-        _currentBasemap.value = type
+    fun setInteractionMode(mode: GisInteractionMode) {
+        _interactionMode.value = mode
     }
 
-    fun toggleBasemap() {
-        _currentBasemap.value = when (_currentBasemap.value) {
-            BasemapType.SATELLITE -> BasemapType.STREETS
-            BasemapType.STREETS -> BasemapType.TOPO
-            BasemapType.TOPO -> if (_offlineMbtilesPath.value != null) BasemapType.OFFLINE_MBTILES else BasemapType.SATELLITE
-            BasemapType.OFFLINE_MBTILES -> BasemapType.SATELLITE
+    fun toggleInteractionMode() {
+        _interactionMode.value = if (_interactionMode.value == GisInteractionMode.BROWSE) {
+            GisInteractionMode.DIGITIZE
+        } else {
+            GisInteractionMode.BROWSE
         }
+    }
+
+    fun setActiveEditLayer(layerName: String) {
+        _activeEditLayer.value = layerName
+    }
+
+    fun toggleLayersExpanded() {
+        _isLayersExpanded.value = !_isLayersExpanded.value
+    }
+
+    fun setBasemap(type: BasemapType) {
+        _currentBasemap.value = type
     }
 
     fun toggleReticle() {
@@ -187,10 +213,6 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleMeasurementMode() {
         _isMeasurementMode.value = !_isMeasurementMode.value
-    }
-
-    fun toggleEditMode() {
-        _isEditMode.value = !_isEditMode.value
     }
 
     fun cycleGpsTrackingMode() {
@@ -249,7 +271,7 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     fun onViewportChanged(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, zoom: Double) {
         lastViewportParams = ViewportParams(minLat, maxLat, minLon, maxLon, zoom)
         viewportJob?.cancel()
-        if (zoom < 7.0) {
+        if (zoom < 5.0) {
             _visibleElements.value = emptyList()
             return
         }

@@ -401,14 +401,15 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                 continue
             }
 
-            // Zoom-based progressive visibility matching QField standards
+            // Progressive visibility matching QField standards:
+            // High & Medium voltage lines, substations and towers are visible at all scales
             val shouldRender = when (type) {
-                GisElementType.SUBSTATION, GisElementType.TOWER, GisElementType.SPAN_AT -> true
+                GisElementType.SUBSTATION, GisElementType.TOWER, GisElementType.SPAN_AT, GisElementType.SPAN_MT -> true
                 GisElementType.TRANSFORMER, GisElementType.SWITCH, GisElementType.REGULATOR,
-                GisElementType.CAPACITOR, GisElementType.SPAN_MT -> zoomLevel >= 11.0
-                GisElementType.SPAN_BT -> zoomLevel >= 13.0
-                GisElementType.POLE -> zoomLevel >= 14.0
-                else -> zoomLevel >= 14.0
+                GisElementType.CAPACITOR -> zoomLevel >= 10.0
+                GisElementType.SPAN_BT -> zoomLevel >= 11.0
+                GisElementType.POLE -> zoomLevel >= 12.0
+                else -> zoomLevel >= 12.0
             }
 
             if (shouldRender) {
@@ -430,7 +431,12 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
             Pair(minE, maxE) to Pair(minN, maxN)
         }.getOrNull()
 
-        val queryLimit = if (zoomLevel >= 14.0) 600 else 300
+        val queryLimit = when {
+            zoomLevel >= 14.0 -> 3500
+            zoomLevel >= 12.0 -> 5000
+            zoomLevel >= 10.0 -> 7000
+            else -> 4000
+        }
 
         for ((layer, type) in layersToRender) {
             val (geomCol, srsId) = getGeometryInfo(layer)
@@ -450,24 +456,11 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                 listOf(minLon, maxLon, minLat, maxLat)
             }
 
-            val matchingFids = mutableListOf<Long>()
-            val rtreeSql = "SELECT id FROM \"$rtreeName\" WHERE minx <= ? AND maxx >= ? AND miny <= ? AND maxy >= ? LIMIT $queryLimit"
-            runCatching {
-                database.rawQuery(rtreeSql, arrayOf(qMaxX.toString(), qMinX.toString(), qMaxY.toString(), qMinY.toString())).use { cursor ->
-                    while (cursor.moveToNext()) {
-                        matchingFids.add(cursor.getLong(0))
-                    }
-                }
-            }
-
-            if (matchingFids.isEmpty()) continue
-
-            val placeholders = matchingFids.joinToString(",") { "?" }
-            val fetchSql = "SELECT * FROM \"$layer\" WHERE fid IN ($placeholders)"
-            val args = matchingFids.map { it.toString() }.toTypedArray()
+            val joinSql = "SELECT f.* FROM \"$layer\" f JOIN \"$rtreeName\" r ON f.fid = r.id WHERE r.minx <= ? AND r.maxx >= ? AND r.miny <= ? AND r.maxy >= ? LIMIT $queryLimit"
+            val queryArgs = arrayOf(qMaxX.toString(), qMinX.toString(), qMaxY.toString(), qMinY.toString())
 
             runCatching {
-                database.rawQuery(fetchSql, args).use { cursor ->
+                database.rawQuery(joinSql, queryArgs).use { cursor ->
                     val colNames = cursor.columnNames
                     val geomIdx = colNames.indexOf(geomCol)
                     val fidIdx = colNames.indexOfFirst { it.equals("fid", ignoreCase = true) || it.equals("id", ignoreCase = true) }
@@ -535,6 +528,24 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                                             points = linePts
                                         )
                                     )
+                                }
+                                if (type == GisElementType.SUBSTATION && parsedGeom.lines.isNotEmpty()) {
+                                    val allPts = parsedGeom.lines.flatten()
+                                    if (allPts.isNotEmpty()) {
+                                        val avgLat = allPts.map { it.first }.average()
+                                        val avgLon = allPts.map { it.second }.average()
+                                        elements.add(
+                                            GisRenderElement.Point(
+                                                fid = fid,
+                                                layerName = layer,
+                                                title = finalTitle,
+                                                type = type,
+                                                metadataJson = metaJson,
+                                                latitude = avgLat,
+                                                longitude = avgLon
+                                            )
+                                        )
+                                    }
                                 }
                             }
                         }

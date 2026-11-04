@@ -119,10 +119,10 @@ fun HomeScreen(onNavigate: (Destination) -> Unit) {
 
             ToolCard(
                 title = "sGIS",
-                badge = "Mapa & GPKG",
-                description = "Visualização e busca offline para arquivos GeoPackage (GPKG) com busca rápida por código de ponto.",
+                badge = "QField • GPKG",
+                description = "Port nativo do QField com motor espacial GeoPackage, GPS integrado do sFoto, medição e cadastro.",
                 assetPath = "app_hub/sgis.svg",
-                accentGradient = listOf(Color(0xFF3B82F6), Color(0xFF06B6D4)),
+                accentGradient = listOf(Color(0xFF4E731B), Color(0xFF7AA136)),
                 onClick = { onNavigate(Destination.GIS) }
             )
 

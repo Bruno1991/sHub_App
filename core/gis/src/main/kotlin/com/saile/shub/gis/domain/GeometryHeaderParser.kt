@@ -79,7 +79,7 @@ object GeometryHeaderParser {
             return null
         }
 
-        return if (srsId == 31980 || (rawMinX > 100_000.0 && rawMinY > 1_000_000.0)) {
+        return if (srsId == 31980 || srsId in 31960..31985 || (rawMinX > 10_000.0 && rawMinY > 1_000_000.0)) {
             val zone = if (srsId in 31960..31985) srsId - 31960 else 20
             val p1 = runCatching {
                 UtmConverter.utmToGeo(
@@ -140,7 +140,7 @@ object GeometryHeaderParser {
         val geomType = buffer.int
 
         fun toLatLon(x: Double, y: Double): Pair<Double, Double>? {
-            return if (srsId == 31980 || (x > 100_000.0 && y > 1_000_000.0)) {
+            return if (srsId == 31980 || srsId in 31960..31985 || (x > 10_000.0 && y > 1_000_000.0)) {
                 val zone = if (srsId in 31960..31985) srsId - 31960 else 20
                 runCatching {
                     val p = UtmConverter.utmToGeo(
@@ -196,6 +196,56 @@ object GeometryHeaderParser {
                         toLatLon(x, y)?.let { pts.add(it) }
                     }
                     if (pts.isNotEmpty()) lines.add(pts)
+                }
+                ParsedGeometry.MultiLine(lines)
+            }
+            3, 1003, 2003, 3003 -> {
+                val numRings = buffer.int
+                val lines = mutableListOf<List<Pair<Double, Double>>>()
+                for (r in 0 until numRings) {
+                    if (buffer.remaining() < 4) break
+                    val numPts = buffer.int
+                    val hasZ = geomType == 1003 || geomType == 3003
+                    val hasM = geomType == 2003 || geomType == 3003
+                    val pts = mutableListOf<Pair<Double, Double>>()
+                    for (i in 0 until numPts) {
+                        if (buffer.remaining() < 16) break
+                        val x = buffer.double
+                        val y = buffer.double
+                        if (hasZ && buffer.remaining() >= 8) buffer.double
+                        if (hasM && buffer.remaining() >= 8) buffer.double
+                        toLatLon(x, y)?.let { pts.add(it) }
+                    }
+                    if (pts.isNotEmpty()) lines.add(pts)
+                }
+                ParsedGeometry.MultiLine(lines)
+            }
+            6, 1006, 2006, 3006 -> {
+                val numPolys = buffer.int
+                val lines = mutableListOf<List<Pair<Double, Double>>>()
+                for (p in 0 until numPolys) {
+                    if (buffer.remaining() < 9) break
+                    val polyEndianByte = buffer.get().toInt()
+                    val polyOrder = if (polyEndianByte == 1) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN
+                    val polyBuffer = buffer.order(polyOrder)
+                    val polyType = polyBuffer.int
+                    val numRings = polyBuffer.int
+                    val hasZ = polyType == 1003 || polyType == 3003
+                    val hasM = polyType == 2003 || polyType == 3003
+                    for (r in 0 until numRings) {
+                        if (polyBuffer.remaining() < 4) break
+                        val numPts = polyBuffer.int
+                        val pts = mutableListOf<Pair<Double, Double>>()
+                        for (i in 0 until numPts) {
+                            if (polyBuffer.remaining() < 16) break
+                            val x = polyBuffer.double
+                            val y = polyBuffer.double
+                            if (hasZ && polyBuffer.remaining() >= 8) polyBuffer.double
+                            if (hasM && polyBuffer.remaining() >= 8) polyBuffer.double
+                            toLatLon(x, y)?.let { pts.add(it) }
+                        }
+                        if (pts.isNotEmpty()) lines.add(pts)
+                    }
                 }
                 ParsedGeometry.MultiLine(lines)
             }

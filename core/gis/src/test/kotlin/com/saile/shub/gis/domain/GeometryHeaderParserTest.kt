@@ -123,4 +123,34 @@ class GeometryHeaderParserTest {
         assertEquals(-10.0, geom.points[0].first, 0.001)
         assertEquals(-62.0, geom.points[0].second, 0.001)
     }
+
+    @Test
+    fun testParseGeometryPolygonGeographic() {
+        // 8 header + 1 wkb endian + 4 geom type (3) + 4 num rings (1) + 4 num pts (3) + 48 pts = 69 bytes
+        val buffer = ByteBuffer.allocate(69)
+        buffer.order(ByteOrder.LITTLE_ENDIAN)
+
+        buffer.put(0x47.toByte())
+        buffer.put(0x50.toByte())
+        buffer.put(0.toByte())
+        buffer.put(1.toByte()) // envelope 0
+        buffer.putInt(4674)
+
+        buffer.put(1.toByte())
+        buffer.putInt(3) // Polygon
+        buffer.putInt(1) // 1 ring
+        buffer.putInt(3) // 3 pts
+        buffer.putDouble(-62.0)
+        buffer.putDouble(-10.0)
+        buffer.putDouble(-61.9)
+        buffer.putDouble(-9.9)
+        buffer.putDouble(-62.0)
+        buffer.putDouble(-10.0)
+
+        val geom = GeometryHeaderParser.parseGeometry(buffer.array())
+        assertNotNull(geom)
+        assertTrue(geom is ParsedGeometry.MultiLine)
+        assertEquals(1, (geom as ParsedGeometry.MultiLine).lines.size)
+        assertEquals(3, geom.lines[0].size)
+    }
 }

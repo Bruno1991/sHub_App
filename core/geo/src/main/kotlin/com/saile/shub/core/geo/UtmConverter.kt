@@ -62,8 +62,8 @@ object UtmConverter {
 
     fun utmToGeo(coordinate: UtmCoordinate): GeoCoordinate {
         require(coordinate.zone in 1..60) { "Zona UTM deve estar entre 1 e 60." }
-        require(coordinate.easting in 100_000.0..1_000_000.0) {
-            "Easting deve estar entre 100000 e 1000000 metros."
+        require(coordinate.easting in 0.0..1_000_000.0) {
+            "Easting deve estar entre 0 e 1000000 metros."
         }
         require(coordinate.northing in 0.0..10_000_000.0) {
             "Northing deve estar entre 0 e 10000000 metros."
