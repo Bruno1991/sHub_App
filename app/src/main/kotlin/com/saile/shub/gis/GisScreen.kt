@@ -244,6 +244,24 @@ fun GisScreen(
         }
     }
 
+    LaunchedEffect(datasetExtent, mapViewRef) {
+        val extent = datasetExtent ?: return@LaunchedEffect
+        val map = mapViewRef ?: return@LaunchedEffect
+        map.zoomToBoundingBox(
+            org.osmdroid.util.BoundingBox(extent.maxLat, extent.maxLon, extent.minLat, extent.minLon),
+            false,
+            60
+        )
+        val bbox = map.boundingBox ?: return@LaunchedEffect
+        viewModel.onViewportChanged(
+            minLat = bbox.latSouth,
+            maxLat = bbox.latNorth,
+            minLon = bbox.lonWest,
+            maxLon = bbox.lonEast,
+            zoom = map.zoomLevelDouble
+        )
+    }
+
     // Update overlay elements
     LaunchedEffect(visibleElements, selectedTarget, mapViewRef) {
         val map = mapViewRef
@@ -373,9 +391,10 @@ fun GisScreen(
         }
     }
 
-    // QField Dashboard Left Navigation Drawer
+    // QField Dashboard Left Navigation Drawer (Opens ONLY when clicking hamburger button)
     ModalNavigationDrawer(
         drawerState = drawerState,
+        gesturesEnabled = false,
         drawerContent = {
             ModalDrawerSheet(
                 modifier = Modifier.width(320.dp),
@@ -866,24 +885,6 @@ fun GisScreen(
                         )
                     }
 
-                    // Zoom In (+)
-                    SmallFloatingActionButton(
-                        onClick = { mapViewRef?.controller?.zoomIn() },
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        contentColor = MaterialTheme.colorScheme.onSurface
-                    ) {
-                        Icon(Icons.Filled.Add, contentDescription = "Aproximar")
-                    }
-
-                    // Zoom Out (-)
-                    SmallFloatingActionButton(
-                        onClick = { mapViewRef?.controller?.zoomOut() },
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        contentColor = MaterialTheme.colorScheme.onSurface
-                    ) {
-                        Icon(Icons.Filled.Remove, contentDescription = "Afastar")
-                    }
-
                     // Full Extent
                     SmallFloatingActionButton(
                         onClick = viewModel::zoomToProjectExtent,
@@ -1087,6 +1088,14 @@ fun GisScreen(
                                     target.subtitle?.let {
                                         Text(text = it, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                                     }
+                                    val utmStr = remember(target.latitude, target.longitude) {
+                                        UtmConverter.formatUtm(target.latitude, target.longitude)
+                                    }
+                                    Text(
+                                        text = "UTM: $utmStr  |  GEO: %.6f, %.6f".format(Locale.US, target.latitude, target.longitude),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                                 IconButton(onClick = viewModel::clearSelection) {
                                     Icon(Icons.Filled.Close, contentDescription = "Fechar")
@@ -1120,8 +1129,7 @@ fun GisScreen(
                             ) {
                                 OutlinedButton(
                                     onClick = {
-                                        val utm = runCatching { UtmConverter.geoToUtm(GeoCoordinate(target.latitude, target.longitude)) }.getOrNull()
-                                        val utmStr = utm?.let { "${it.zone}S %.0f %.0f".format(Locale.US, it.easting, it.northing) }
+                                        val utmStr = UtmConverter.formatUtm(target.latitude, target.longitude)
                                         GisNavigationHelper.copyCoordinatesToClipboard(context, target.latitude, target.longitude, utmStr)
                                     },
                                     modifier = Modifier.weight(1f)

@@ -6,6 +6,7 @@ import com.saile.shub.core.geo.UtmConverter
 import com.saile.shub.gis.data.entities.GisFeatureEntity
 import com.saile.shub.gis.usecase.SearchItem
 import org.json.JSONObject
+import java.text.Normalizer
 import java.util.Locale
 
 class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
@@ -74,19 +75,23 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
     }
 
     fun classifyLayer(layer: String): GisElementType {
-        val lower = layer.lowercase(Locale.ROOT)
+        val norm = Normalizer.normalize(layer, Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}"), "")
+            .replace('\uFFFD', ' ')
+            .lowercase(Locale.ROOT)
+
         return when {
-            lower.contains("subesta") -> GisElementType.SUBSTATION
-            lower.contains("torre") -> GisElementType.TOWER
-            lower.contains("poste de trans") -> GisElementType.POLE
-            lower.contains("vão at") || lower.contains("vao at") || lower.contains("vo at") -> GisElementType.SPAN_AT
-            lower.contains("transformador") -> GisElementType.TRANSFORMER
-            lower.contains("chave") || lower.contains("fluxo da chave") -> GisElementType.SWITCH
-            lower.contains("regulador") -> GisElementType.REGULATOR
-            lower.contains("capacitor") -> GisElementType.CAPACITOR
-            lower.contains("vão mt") || lower.contains("vao mt") || lower.contains("vo mt") -> GisElementType.SPAN_MT
-            lower.contains("vão bt") || lower.contains("vao bt") || lower.contains("vo bt") -> GisElementType.SPAN_BT
-            lower.contains("poste") -> GisElementType.POLE
+            norm.contains("subesta") || norm.contains("subest") -> GisElementType.SUBSTATION
+            norm.contains("torre") -> GisElementType.TOWER
+            norm.contains("poste de trans") -> GisElementType.POLE
+            norm.contains("at") && (norm.contains("vao") || norm.contains("v o") || norm.contains("vo") || norm.contains("span") || norm.contains("ero")) -> GisElementType.SPAN_AT
+            norm.contains("mt") && (norm.contains("vao") || norm.contains("v o") || norm.contains("vo") || norm.contains("span") || norm.contains("ero")) -> GisElementType.SPAN_MT
+            norm.contains("bt") && (norm.contains("vao") || norm.contains("v o") || norm.contains("vo") || norm.contains("span") || norm.contains("ero")) -> GisElementType.SPAN_BT
+            norm.contains("transformador") || norm.contains("trafo") -> GisElementType.TRANSFORMER
+            norm.contains("chave") || norm.contains("fluxo") -> GisElementType.SWITCH
+            norm.contains("regulador") -> GisElementType.REGULATOR
+            norm.contains("capacitor") -> GisElementType.CAPACITOR
+            norm.contains("poste") -> GisElementType.POLE
             else -> GisElementType.OTHER
         }
     }
@@ -407,9 +412,9 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                 GisElementType.SUBSTATION, GisElementType.TOWER, GisElementType.SPAN_AT, GisElementType.SPAN_MT -> true
                 GisElementType.TRANSFORMER, GisElementType.SWITCH, GisElementType.REGULATOR,
                 GisElementType.CAPACITOR -> zoomLevel >= 10.0
-                GisElementType.SPAN_BT -> zoomLevel >= 11.0
-                GisElementType.POLE -> zoomLevel >= 12.0
-                else -> zoomLevel >= 12.0
+                GisElementType.SPAN_BT -> zoomLevel >= 10.5
+                GisElementType.POLE -> zoomLevel >= 11.5
+                else -> zoomLevel >= 10.5
             }
 
             if (shouldRender) {
@@ -418,12 +423,17 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
         }
 
         // 2. Query each layer using its spatial R-Tree index
+        val safeMinLat = minOf(minLat, maxLat).coerceIn(-79.9, 83.9)
+        val safeMaxLat = maxOf(minLat, maxLat).coerceIn(-79.9, 83.9)
+        val safeMinLon = minOf(minLon, maxLon).coerceIn(-179.9, 179.9)
+        val safeMaxLon = maxOf(minLon, maxLon).coerceIn(-179.9, 179.9)
+
         val utmZone = 20 // SIRGAS 2000 / UTM Zone 20S (EPSG 31980) used across Rondonia grid
         val utmCorners = runCatching {
-            val sw = UtmConverter.geoToUtm(GeoCoordinate(minLat, minLon), forcedZone = utmZone)
-            val ne = UtmConverter.geoToUtm(GeoCoordinate(maxLat, maxLon), forcedZone = utmZone)
-            val nw = UtmConverter.geoToUtm(GeoCoordinate(maxLat, minLon), forcedZone = utmZone)
-            val se = UtmConverter.geoToUtm(GeoCoordinate(minLat, maxLon), forcedZone = utmZone)
+            val sw = UtmConverter.geoToUtm(GeoCoordinate(safeMinLat, safeMinLon), forcedZone = utmZone)
+            val ne = UtmConverter.geoToUtm(GeoCoordinate(safeMaxLat, safeMaxLon), forcedZone = utmZone)
+            val nw = UtmConverter.geoToUtm(GeoCoordinate(safeMaxLat, safeMinLon), forcedZone = utmZone)
+            val se = UtmConverter.geoToUtm(GeoCoordinate(safeMinLat, safeMaxLon), forcedZone = utmZone)
             val minE = minOf(sw.easting, ne.easting, nw.easting, se.easting)
             val maxE = maxOf(sw.easting, ne.easting, nw.easting, se.easting)
             val minN = minOf(sw.northing, ne.northing, nw.northing, se.northing)
@@ -453,7 +463,7 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
                 val (ePair, nPair) = utmCorners
                 listOf(ePair.first, ePair.second, nPair.first, nPair.second)
             } else {
-                listOf(minLon, maxLon, minLat, maxLat)
+                listOf(safeMinLon, safeMaxLon, safeMinLat, safeMaxLat)
             }
 
             val joinSql = "SELECT f.* FROM \"$layer\" f JOIN \"$rtreeName\" r ON f.fid = r.id WHERE r.minx <= ? AND r.maxx >= ? AND r.miny <= ? AND r.maxy >= ? LIMIT $queryLimit"

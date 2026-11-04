@@ -58,7 +58,8 @@ object CoordinateSearchParser {
                 }.getOrNull()
 
                 if (geo != null) {
-                    val title = "Coordenada UTM: ${zone}S %.0fm E, %.0fm N".format(Locale.US, easting, northing)
+                    val band = UtmConverter.getUtmBand(geo.latitude)
+                    val title = "Coordenada UTM: $zone$band %.0f %.0f".format(Locale.US, easting, northing)
                     val desc = "Localização: %.6f, %.6f".format(Locale.US, geo.latitude, geo.longitude)
                     return ParsedCoordinate(geo.latitude, geo.longitude, title, desc, isUtm = true)
                 }
@@ -94,7 +95,8 @@ object CoordinateSearchParser {
             }.getOrNull()
 
             if (geo != null) {
-                val title = "Coordenada UTM (Zona 20S): %.0fm E, %.0fm N".format(Locale.US, easting, northing)
+                val band = UtmConverter.getUtmBand(geo.latitude)
+                val title = "Coordenada UTM: 20$band %.0f %.0f".format(Locale.US, easting, northing)
                 val desc = "Localização Geográfica: %.6f, %.6f".format(Locale.US, geo.latitude, geo.longitude)
                 return ParsedCoordinate(geo.latitude, geo.longitude, title, desc, isUtm = true)
             }

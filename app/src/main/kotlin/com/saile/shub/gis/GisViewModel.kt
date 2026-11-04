@@ -101,7 +101,7 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     private val _activeLayerFilter = MutableStateFlow<Set<GisElementType>>(GisElementType.values().toSet())
     val activeLayerFilter: StateFlow<Set<GisElementType>> = _activeLayerFilter.asStateFlow()
 
-    private val _zoomToExtentEvent = MutableSharedFlow<BoundingBox>(extraBufferCapacity = 1)
+    private val _zoomToExtentEvent = MutableSharedFlow<BoundingBox>(replay = 1, extraBufferCapacity = 1)
     val zoomToExtentEvent: SharedFlow<BoundingBox> = _zoomToExtentEvent.asSharedFlow()
 
     private val _offlineMbtilesPath = MutableStateFlow<String?>(null)

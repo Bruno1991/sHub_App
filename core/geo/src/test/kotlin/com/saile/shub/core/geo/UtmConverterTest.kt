@@ -3,6 +3,7 @@ package com.saile.shub.core.geo
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class UtmConverterTest {
     @Test
@@ -37,5 +38,14 @@ class UtmConverterTest {
         assertFailsWith<IllegalArgumentException> {
             UtmConverter.utmToGeo(UtmCoordinate(61, Hemisphere.NORTH, 500_000.0, 0.0))
         }
+    }
+
+    @Test
+    fun `formats Rondonia coordinates in sFoto UTM mode with zone and band`() {
+        val band = UtmConverter.getUtmBand(-10.828)
+        assertEquals('L', band)
+
+        val utmText = UtmConverter.formatUtm(-10.828, -63.284)
+        assertTrue(utmText.startsWith("20L "))
     }
 }

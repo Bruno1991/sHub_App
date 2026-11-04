@@ -41,7 +41,10 @@ data class GisPositioningInfo(
         get() = "%.6f, %.6f".format(Locale.US, latitude, longitude)
 
     val utmText: String
-        get() = utm?.let { "${it.zone}S %.0f %.0f".format(Locale.US, it.easting, it.northing) } ?: "--"
+        get() = utm?.let {
+            val band = UtmConverter.getUtmBand(latitude)
+            "${it.zone}$band %.0f %.0f".format(Locale.US, it.easting, it.northing)
+        } ?: "--"
 }
 
 class GisLocationTracker(private val context: Context) : LocationListener, SensorEventListener {

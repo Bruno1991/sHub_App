@@ -103,6 +103,38 @@ object UtmConverter {
         return GeoCoordinate(latitude.toDegrees(), longitudeOrigin + longitude.toDegrees())
     }
 
+    /**
+     * Determines the UTM latitude band character (C to X, omitting I and O).
+     * Matches the standard used across sFoto and QGIS.
+     */
+    fun getUtmBand(latitude: Double): Char {
+        val bands = "CDEFGHJKLMNPQRSTUVWX"
+        val bandIndex = ((latitude + 80.0) / 8.0).toInt().coerceIn(0, bands.lastIndex)
+        return bands[bandIndex]
+    }
+
+    /**
+     * Formats latitude/longitude as authentic sFoto UTM string with Zone and Band letter
+     * (e.g. "20L 612345 8765432").
+     */
+    fun formatUtm(latitude: Double, longitude: Double): String {
+        return runCatching {
+            val geo = GeoCoordinate(latitude, longitude)
+            val utm = geoToUtm(geo)
+            val band = getUtmBand(latitude)
+            "${utm.zone}$band %.0f %.0f".format(java.util.Locale.US, utm.easting, utm.northing)
+        }.getOrDefault("--")
+    }
+
+    /**
+     * Formats UtmCoordinate and latitude as authentic sFoto UTM string with Zone and Band letter
+     * (e.g. "20L 612345 8765432").
+     */
+    fun formatUtm(utm: UtmCoordinate, latitude: Double): String {
+        val band = getUtmBand(latitude)
+        return "${utm.zone}$band %.0f %.0f".format(java.util.Locale.US, utm.easting, utm.northing)
+    }
+
     private fun meridionalArc(latitudeRad: Double): Double = semiMajorAxis * (
         (1 - eccentricitySquared / 4 - 3 * eccentricitySquared.pow(2) / 64 - 5 * eccentricitySquared.pow(3) / 256) * latitudeRad -
             (3 * eccentricitySquared / 8 + 3 * eccentricitySquared.pow(2) / 32 + 45 * eccentricitySquared.pow(3) / 1024) * sin(2 * latitudeRad) +
