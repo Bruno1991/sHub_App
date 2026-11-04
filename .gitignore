@@ -29,6 +29,7 @@ captures/
 *.keystore
 *.mp4
 *.gpkg
+*.mbtiles
 
 # Logs & temp
 *.log
