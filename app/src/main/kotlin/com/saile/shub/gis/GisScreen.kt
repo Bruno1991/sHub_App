@@ -1,6 +1,8 @@
 package com.saile.shub.gis
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
@@ -12,6 +14,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -100,8 +103,26 @@ fun GisScreen(
     val positioningInfo by locationTracker.positioningInfo.collectAsState()
     val compassHeading by locationTracker.compassHeading.collectAsState()
 
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val fine = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
+        val coarse = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
+        if (fine || coarse) {
+            locationTracker.startTracking()
+        }
+    }
+
     LaunchedEffect(Unit) {
-        locationTracker.startTracking()
+        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!hasFine && !hasCoarse) {
+            locationPermissionLauncher.launch(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            )
+        } else {
+            locationTracker.startTracking()
+        }
     }
     DisposableEffect(Unit) {
         onDispose { locationTracker.stopTracking() }
@@ -238,20 +259,34 @@ fun GisScreen(
         mapViewRef?.postInvalidate()
     }
 
-    // GPS Tracking Follower
-    LaunchedEffect(gpsTrackingMode, positioningInfo, compassHeading) {
+    // Real-time GPS user position rendering on vector overlay
+    LaunchedEffect(positioningInfo, compassHeading) {
+        vectorOverlay.updateUserPosition(positioningInfo, compassHeading)
+        mapViewRef?.postInvalidate()
+    }
+
+    // Toggle compass sensor only when in FOLLOW_BEARING mode
+    LaunchedEffect(gpsTrackingMode) {
+        locationTracker.setCompassEnabled(gpsTrackingMode == GpsTrackingMode.FOLLOW_BEARING)
+        if (gpsTrackingMode == GpsTrackingMode.OFF) {
+            mapViewRef?.mapOrientation = 0f
+        }
+    }
+
+    // GPS Camera Follower (only animates on location changes, NOT on compass heading!)
+    LaunchedEffect(gpsTrackingMode, positioningInfo?.latitude, positioningInfo?.longitude) {
+        if (gpsTrackingMode == GpsTrackingMode.OFF) return@LaunchedEffect
         val map = mapViewRef ?: return@LaunchedEffect
         val pos = positioningInfo ?: return@LaunchedEffect
-        when (gpsTrackingMode) {
-            GpsTrackingMode.OFF -> { /* Free pan */ }
-            GpsTrackingMode.FOLLOW -> {
-                map.controller.animateTo(GeoPoint(pos.latitude, pos.longitude))
-            }
-            GpsTrackingMode.FOLLOW_BEARING -> {
-                map.controller.animateTo(GeoPoint(pos.latitude, pos.longitude))
-                map.mapOrientation = -compassHeading
-            }
-        }
+        val targetZoom = if (map.zoomLevelDouble < 14.0) 16.5 else map.zoomLevelDouble
+        map.controller.animateTo(GeoPoint(pos.latitude, pos.longitude), targetZoom, 400L)
+    }
+
+    // Compass Bearing Map Rotation (only when FOLLOW_BEARING is active)
+    LaunchedEffect(gpsTrackingMode, compassHeading) {
+        if (gpsTrackingMode != GpsTrackingMode.FOLLOW_BEARING) return@LaunchedEffect
+        val map = mapViewRef ?: return@LaunchedEffect
+        map.mapOrientation = -compassHeading
     }
 
     // Target Selection Animation
@@ -693,6 +728,7 @@ fun GisScreen(
 
                             addMapListener(object : org.osmdroid.events.MapListener {
                                 override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
+                                    viewModel.disableGpsFollowing()
                                     update()
                                     return false
                                 }
@@ -700,20 +736,33 @@ fun GisScreen(
                                     update()
                                     return false
                                 }
+                                private var lastUpdateZoom = 0.0
+                                private var lastUpdateLat = 0.0
+                                private var lastUpdateLon = 0.0
+
                                 private fun update() {
                                     val c = mapCenter
+                                    val z = zoomLevelDouble
                                     if (c != null) {
-                                        centerLat = c.latitude
-                                        centerLon = c.longitude
+                                        val dLat = Math.abs(c.latitude - lastUpdateLat)
+                                        val dLon = Math.abs(c.longitude - lastUpdateLon)
+                                        val dZoom = Math.abs(z - lastUpdateZoom)
+                                        if (dLat > 0.005 || dLon > 0.005 || dZoom > 0.1) {
+                                            lastUpdateLat = c.latitude
+                                            lastUpdateLon = c.longitude
+                                            lastUpdateZoom = z
+                                            centerLat = c.latitude
+                                            centerLon = c.longitude
+                                            currentZoom = z
+                                        }
                                     }
-                                    currentZoom = zoomLevelDouble
                                     val bbox = boundingBox ?: return
                                     viewModel.onViewportChanged(
                                         minLat = bbox.latSouth,
                                         maxLat = bbox.latNorth,
                                         minLon = bbox.lonWest,
                                         maxLon = bbox.lonEast,
-                                        zoom = zoomLevelDouble
+                                        zoom = z
                                     )
                                 }
                             })

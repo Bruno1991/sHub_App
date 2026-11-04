@@ -223,6 +223,12 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun disableGpsFollowing() {
+        if (_gpsTrackingMode.value != GpsTrackingMode.OFF) {
+            _gpsTrackingMode.value = GpsTrackingMode.OFF
+        }
+    }
+
     fun toggleLayer(type: GisElementType) {
         val current = _activeLayerFilter.value.toMutableSet()
         if (current.contains(type)) {
@@ -276,7 +282,7 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewportJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(100)
+            delay(200)
             queryViewport(minLat, maxLat, minLon, maxLon, zoom)
         }
     }

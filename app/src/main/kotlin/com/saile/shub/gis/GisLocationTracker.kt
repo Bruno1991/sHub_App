@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.Locale
+import kotlin.math.abs
 
 data class GisPositioningInfo(
     val location: Location?,
@@ -55,11 +56,14 @@ class GisLocationTracker(private val context: Context) : LocationListener, Senso
     val compassHeading: StateFlow<Float> = _compassHeading.asStateFlow()
 
     private var isTracking = false
+    private var isCompassActive = false
 
     private val accelerometerReading = FloatArray(3)
     private val magnetometerReading = FloatArray(3)
     private val rotationMatrix = FloatArray(9)
     private val orientationAngles = FloatArray(3)
+
+    private var lastEmittedHeading = 0f
 
     fun startTracking() {
         if (isTracking) return
@@ -71,7 +75,7 @@ class GisLocationTracker(private val context: Context) : LocationListener, Senso
             updateLocation(initialLoc)
         }
 
-        // 2. Request fine location updates
+        // 2. Request fine location updates (authoritative GPS + fallback Network)
         val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
@@ -93,29 +97,55 @@ class GisLocationTracker(private val context: Context) : LocationListener, Senso
                 )
             }
         }
+    }
 
-        // 3. Register sensors for compass heading
-        sensorManager?.let { sm ->
-            sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
-                sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+    fun setCompassEnabled(enabled: Boolean) {
+        if (isCompassActive == enabled) return
+        isCompassActive = enabled
+        if (enabled) {
+            sensorManager?.let { sm ->
+                sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
+                    sm.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+                }
+                sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)?.let {
+                    sm.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+                }
             }
-            sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)?.let {
-                sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
-            }
+        } else {
+            runCatching { sensorManager?.unregisterListener(this) }
         }
     }
 
     fun stopTracking() {
         if (!isTracking) return
         isTracking = false
+        setCompassEnabled(false)
         runCatching { locationManager?.removeUpdates(this) }
-        runCatching { sensorManager?.unregisterListener(this) }
     }
 
     override fun onLocationChanged(location: Location) {
         val current = _positioningInfo.value?.location
-        if (LocationUtils.isBetterLocation(location, current)) {
+        if (current == null) {
             updateLocation(location)
+            return
+        }
+
+        // Field navigation rule:
+        // Always accept fresh GPS fixes. Only accept Network if GPS is older than 8s.
+        val isNewer = location.time >= current.time - 1000
+        val isGps = location.provider == LocationManager.GPS_PROVIDER
+        val currentIsGps = current.provider == LocationManager.GPS_PROVIDER
+        val currentAgeMs = System.currentTimeMillis() - current.time
+
+        if (isGps) {
+            if (isNewer || currentAgeMs > 4000) {
+                updateLocation(location)
+            }
+        } else {
+            // Network provider
+            if (!currentIsGps || currentAgeMs > 8000) {
+                updateLocation(location)
+            }
         }
     }
 
@@ -139,12 +169,20 @@ class GisLocationTracker(private val context: Context) : LocationListener, Senso
     }
 
     override fun onSensorChanged(event: SensorEvent) {
+        if (!isCompassActive) return
+
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
-                System.arraycopy(event.values, 0, accelerometerReading, 0, 3)
+                // Low-pass filter for accelerometer
+                for (i in 0..2) {
+                    accelerometerReading[i] = accelerometerReading[i] * 0.8f + event.values[i] * 0.2f
+                }
             }
             Sensor.TYPE_MAGNETIC_FIELD -> {
-                System.arraycopy(event.values, 0, magnetometerReading, 0, 3)
+                // Low-pass filter for magnetometer
+                for (i in 0..2) {
+                    magnetometerReading[i] = magnetometerReading[i] * 0.8f + event.values[i] * 0.2f
+                }
             }
         }
 
@@ -152,7 +190,14 @@ class GisLocationTracker(private val context: Context) : LocationListener, Senso
             SensorManager.getOrientation(rotationMatrix, orientationAngles)
             val azimuthRad = orientationAngles[0]
             val azimuthDeg = (Math.toDegrees(azimuthRad.toDouble()).toFloat() + 360f) % 360f
-            _compassHeading.value = azimuthDeg
+
+            // Deadband: only emit if heading delta > 2 degrees to avoid unnecessary redraws
+            val diff = abs(azimuthDeg - lastEmittedHeading)
+            val minDiff = if (diff > 180f) 360f - diff else diff
+            if (minDiff >= 2.0f) {
+                lastEmittedHeading = azimuthDeg
+                _compassHeading.value = azimuthDeg
+            }
         }
     }
 
@@ -162,4 +207,3 @@ class GisLocationTracker(private val context: Context) : LocationListener, Senso
     @Deprecated("Deprecated in Java")
     override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
 }
-
