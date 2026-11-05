@@ -31,6 +31,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -46,6 +48,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -223,6 +226,7 @@ fun GisScreen(
                     val provider = GisMbtilesHelper.createTileProvider(context, meta)
                     map.setTileProvider(provider)
                     map.setTileSource(provider.tileSource)
+                    map.tileProvider.clearTileCache()
                     map.invalidate()
                     Log.i("ShubGisMbtiles", "Offline MBTiles provider attached: source=${provider.tileSource.name()}")
                 } catch (e: Throwable) {
@@ -246,6 +250,7 @@ fun GisScreen(
                 }
                 val tileSource = GisTileSources.getTileSource(currentBasemap)
                 map.setTileSource(tileSource)
+                map.tileProvider.clearTileCache()
             } catch (e: Throwable) {
                 Log.e("ShubGisMbtiles", "Failed to switch basemap: ${e.message}", e)
             }
@@ -740,6 +745,8 @@ fun GisScreen(
                                             viewModel.search(it)
                                         },
                                         placeholder = { Text("Buscar ativo, código, lat/lon ou UTM", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)) },
+                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                        keyboardActions = KeyboardActions(onSearch = { viewModel.search(searchQuery) }),
                                         colors = TextFieldDefaults.colors(
                                             focusedTextColor = MaterialTheme.colorScheme.onSurface,
                                             unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -751,6 +758,13 @@ fun GisScreen(
                                         singleLine = true,
                                         modifier = Modifier.weight(1f)
                                     )
+                                    if (searchQuery.isNotBlank()) {
+                                        IconButton(onClick = {
+                                            viewModel.search(searchQuery)
+                                        }) {
+                                            Icon(Icons.Filled.Search, contentDescription = "Executar busca", tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
                                     IconButton(onClick = {
                                         searchQuery = ""
                                         isSearchFocused = false
@@ -778,7 +792,9 @@ fun GisScreen(
                             setMultiTouchControls(true)
                             isTilesScaledToDpi = true
                             if (viewModel.currentBasemap.value == BasemapType.OFFLINE_MBTILES && viewModel.activeMbtilesMetadata.value != null) {
-                                setTileProvider(GisMbtilesHelper.createTileProvider(ctx, viewModel.activeMbtilesMetadata.value!!))
+                                val offlineProvider = GisMbtilesHelper.createTileProvider(ctx, viewModel.activeMbtilesMetadata.value!!)
+                                setTileProvider(offlineProvider)
+                                setTileSource(offlineProvider.tileSource)
                             } else {
                                 setTileSource(GisTileSources.getTileSource(viewModel.currentBasemap.value))
                             }
@@ -1198,7 +1214,7 @@ fun GisScreen(
                 }
 
                 // 8. Search Results Dropdown Overlay
-                AnimatedVisibility(visible = isSearchFocused && state is GisState.SearchResults) {
+                AnimatedVisibility(visible = (isSearchFocused || searchQuery.isNotBlank()) && state is GisState.SearchResults) {
                     Card(
                         shape = RoundedCornerShape(12.dp),
                         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
@@ -1218,6 +1234,7 @@ fun GisScreen(
                                             leadingContent = { Icon(Icons.Filled.LocationOn, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                             modifier = Modifier.clickable {
                                                 viewModel.selectItem(coord)
+                                                searchQuery = ""
                                                 isSearchFocused = false
                                             }
                                         )
@@ -1232,6 +1249,7 @@ fun GisScreen(
                                         leadingContent = { Icon(Icons.Filled.ElectricBolt, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                         modifier = Modifier.clickable {
                                             viewModel.selectItem(feat)
+                                            searchQuery = ""
                                             isSearchFocused = false
                                         }
                                     )
@@ -1462,8 +1480,21 @@ fun GisScreen(
                                             ) {
                                                 Icon(Icons.Filled.ZoomOutMap, contentDescription = null, modifier = Modifier.size(16.dp))
                                                 Spacer(modifier = Modifier.width(4.dp))
-                                                Text("Ver Extensão", style = MaterialTheme.typography.labelSmall)
+                                                Text("Mundi", style = MaterialTheme.typography.labelSmall)
                                             }
+                                        }
+
+                                        FilledTonalButton(
+                                            onClick = {
+                                                viewModel.zoomToProjectExtent()
+                                                showBasemapDialog = false
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                            modifier = Modifier.height(34.dp)
+                                        ) {
+                                            Icon(Icons.Filled.MyLocation, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Focar Ativos", style = MaterialTheme.typography.labelSmall)
                                         }
                                     }
 

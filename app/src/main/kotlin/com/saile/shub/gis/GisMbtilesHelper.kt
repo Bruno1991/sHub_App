@@ -88,6 +88,7 @@ object GisMbtilesHelper {
     class RobustMbtilesArchive(val file: File) : IArchiveFile {
         private var database: SQLiteDatabase? = null
         private val lock = Any()
+        private var hitCounter = 0L
 
         init {
             openDb()
@@ -140,6 +141,9 @@ object GisMbtilesHelper {
                 // 2. Fallback to standard XYZ row if not found and tmsY != y
                 if (stream == null && tmsY != y) {
                     stream = queryTile(db, zoom, x, y)
+                }
+                if (stream != null && (hitCounter++ % 15L == 0L)) {
+                    Log.d(TAG, "MBTiles HIT: z=$zoom x=$x y=$y (tmsY=$tmsY) [${file.name}]")
                 }
                 return stream
             }
@@ -286,13 +290,12 @@ object GisMbtilesHelper {
             true
         )
 
-        val approximater = MapTileApproximater()
-        approximater.addProvider(archiveProvider)
-
+        // Native offline satellite: render direct from SQLite MBTiles archive
+        // without blurry approximations / pixelated squares ("quadriculados")
         return MapTileProviderArray(
             tileSource,
             registerReceiver,
-            arrayOf(archiveProvider, approximater)
+            arrayOf(archiveProvider)
         )
     }
 
@@ -326,7 +329,10 @@ object GisMbtilesHelper {
             }
         }
 
-        return results.sortedByDescending { it.file.lastModified() }
+        return results.sortedWith(
+            compareByDescending<MbtilesMetadata> { it.sizeBytes }
+                .thenByDescending { it.file.lastModified() }
+        )
     }
 
     /**

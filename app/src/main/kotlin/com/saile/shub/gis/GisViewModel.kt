@@ -256,7 +256,9 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         if (type == BasemapType.OFFLINE_MBTILES && _activeMbtilesMetadata.value == null) {
             val list = _availableMbtiles.value
             if (list.isNotEmpty()) {
-                _activeMbtilesMetadata.value = list.first()
+                val best = list.maxByOrNull { it.sizeBytes } ?: list.first()
+                _activeMbtilesMetadata.value = best
+                _offlineMbtilesPath.value = best.file.absolutePath
             } else {
                 refreshAvailableMbtiles()
             }
@@ -314,9 +316,16 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val list = GisMbtilesHelper.scanAvailableMbtiles(getApplication())
             _availableMbtiles.value = list
-            if (_activeMbtilesMetadata.value == null && list.isNotEmpty()) {
-                _activeMbtilesMetadata.value = list.first()
-                _offlineMbtilesPath.value = list.first().file.absolutePath
+            if (list.isNotEmpty()) {
+                val best = list.maxByOrNull { it.sizeBytes } ?: list.first()
+                if (_activeMbtilesMetadata.value == null || _activeMbtilesMetadata.value?.file?.exists() != true) {
+                    _activeMbtilesMetadata.value = best
+                    _offlineMbtilesPath.value = best.file.absolutePath
+                }
+                // Automatically activate offline satellite basemap if default is online
+                if (_currentBasemap.value == BasemapType.GOOGLE_SATELLITE) {
+                    _currentBasemap.value = BasemapType.OFFLINE_MBTILES
+                }
             }
         }
     }
@@ -479,12 +488,14 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         searchJob = viewModelScope.launch {
-            delay(120)
+            delay(80)
             try {
                 val gpkgPath = getActiveGpkgFile()?.absolutePath
                 val results = searchUseCase.execute(query, gpkgPath = gpkgPath)
+                Log.i("ShubGisSearch", "Search '$query' -> coordMatch=${results.coordinateMatch != null}, features=${results.features.size}")
                 _state.value = GisState.SearchResults(results)
             } catch (e: Exception) {
+                Log.e("ShubGisSearch", "Search error: ${e.message}", e)
                 _state.value = GisState.Error(e.message ?: "Erro na busca.")
             }
         }
