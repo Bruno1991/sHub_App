@@ -253,6 +253,14 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setBasemap(type: BasemapType) {
         _currentBasemap.value = type
+        if (type == BasemapType.OFFLINE_MBTILES && _activeMbtilesMetadata.value == null) {
+            val list = _availableMbtiles.value
+            if (list.isNotEmpty()) {
+                _activeMbtilesMetadata.value = list.first()
+            } else {
+                refreshAvailableMbtiles()
+            }
+        }
     }
 
     fun toggleReticle() {

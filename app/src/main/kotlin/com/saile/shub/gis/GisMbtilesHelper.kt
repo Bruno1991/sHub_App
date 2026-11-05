@@ -1,22 +1,29 @@
 package com.saile.shub.gis
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.saile.shub.gis.domain.BoundingBox
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.osmdroid.tileprovider.IRegisterReceiver
 import org.osmdroid.tileprovider.MapTileProviderArray
 import org.osmdroid.tileprovider.modules.IArchiveFile
-import org.osmdroid.tileprovider.modules.MBTilesFileArchive
 import org.osmdroid.tileprovider.modules.MapTileApproximater
 import org.osmdroid.tileprovider.modules.MapTileFileArchiveProvider
+import org.osmdroid.tileprovider.tilesource.ITileSource
 import org.osmdroid.tileprovider.tilesource.XYTileSource
-import org.osmdroid.tileprovider.util.SimpleRegisterReceiver
+import org.osmdroid.util.MapTileIndex
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 
 data class MbtilesMetadata(
     val file: File,
@@ -30,13 +37,146 @@ data class MbtilesMetadata(
     val formattedSize: String
         get() {
             val mb = sizeBytes / (1024.0 * 1024.0)
-            return if (mb >= 1024.0) "%.2f GB".format(mb / 1024.0) else "%.1f MB".format(mb)
+            return if (mb >= 1024.0) {
+                String.format(java.util.Locale.US, "%.2f GB", mb / 1024.0)
+            } else {
+                String.format(java.util.Locale.US, "%.1f MB", mb)
+            }
         }
 }
 
 object GisMbtilesHelper {
 
     private const val TAG = "ShubGisMbtiles"
+
+    /**
+     * Safe implementation of IRegisterReceiver for Android 14+ (API 34+).
+     * Prevents SecurityException from unexported BroadcastReceivers in Osmdroid.
+     */
+    class SafeRegisterReceiver(private val context: Context) : IRegisterReceiver {
+        override fun registerReceiver(receiver: BroadcastReceiver, filter: IntentFilter): Intent? {
+            return try {
+                ContextCompat.registerReceiver(
+                    context,
+                    receiver,
+                    filter,
+                    ContextCompat.RECEIVER_NOT_EXPORTED
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "SafeRegisterReceiver: ignored broadcast registration: ${e.message}")
+                null
+            }
+        }
+
+        override fun unregisterReceiver(receiver: BroadcastReceiver) {
+            try {
+                context.unregisterReceiver(receiver)
+            } catch (e: Exception) {
+                // Ignore if not registered or already removed
+            }
+        }
+
+        override fun destroy() {
+            // no-op
+        }
+    }
+
+    /**
+     * Highly resilient SQLite IArchiveFile implementation for .mbtiles.
+     * Prevents connection pool closures and handles both standard TMS and XYZ row coordinates.
+     */
+    class RobustMbtilesArchive(val file: File) : IArchiveFile {
+        private var database: SQLiteDatabase? = null
+        private val lock = Any()
+
+        init {
+            openDb()
+        }
+
+        private fun openDb(): Boolean {
+            synchronized(lock) {
+                if (database?.isOpen == true) return true
+                return try {
+                    database = SQLiteDatabase.openDatabase(
+                        file.absolutePath,
+                        null,
+                        SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS
+                    )
+                    true
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to open MBTiles database ${file.name}: ${e.message}")
+                    false
+                }
+            }
+        }
+
+        override fun init(pFile: File) {
+            synchronized(lock) {
+                runCatching { database?.close() }
+                database = SQLiteDatabase.openDatabase(
+                    pFile.absolutePath,
+                    null,
+                    SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS
+                )
+            }
+        }
+
+        override fun getInputStream(pTileSource: ITileSource?, pMapTileIndex: Long): InputStream? {
+            val zoom = MapTileIndex.getZoom(pMapTileIndex)
+            val x = MapTileIndex.getX(pMapTileIndex)
+            val y = MapTileIndex.getY(pMapTileIndex)
+
+            // MBTiles 1.3 spec: tile_row is inverted TMS coordinate -> (2^zoom - 1) - y
+            val tmsY = (1 shl zoom) - 1 - y
+
+            synchronized(lock) {
+                if (database?.isOpen != true) {
+                    if (!openDb()) return null
+                }
+                val db = database ?: return null
+
+                // 1. Try standard MBTiles TMS row
+                var stream = queryTile(db, zoom, x, tmsY)
+                // 2. Fallback to standard XYZ row if not found and tmsY != y
+                if (stream == null && tmsY != y) {
+                    stream = queryTile(db, zoom, x, y)
+                }
+                return stream
+            }
+        }
+
+        private fun queryTile(db: SQLiteDatabase, zoom: Int, x: Int, y: Int): InputStream? {
+            return try {
+                db.rawQuery(
+                    "SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ? LIMIT 1",
+                    arrayOf(zoom.toString(), x.toString(), y.toString())
+                ).use { cursor ->
+                    if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                        val bytes = cursor.getBlob(0)
+                        if (bytes != null && bytes.isNotEmpty()) {
+                            ByteArrayInputStream(bytes)
+                        } else null
+                    } else null
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error querying tile z=$zoom x=$x y=$y: ${e.message}")
+                null
+            }
+        }
+
+        override fun getTileSources(): Set<String> = emptySet()
+
+        override fun setIgnoreTileSource(pIgnoreTileSource: Boolean) {
+            // no-op
+        }
+
+        override fun close() {
+            synchronized(lock) {
+                runCatching { database?.close() }
+                database = null
+            }
+        }
+    }
 
     /**
      * Reads metadata and tile information from an SQLite .mbtiles database.
@@ -46,7 +186,11 @@ object GisMbtilesHelper {
 
         var db: SQLiteDatabase? = null
         return try {
-            db = SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+            db = SQLiteDatabase.openDatabase(
+                file.absolutePath,
+                null,
+                SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS
+            )
 
             var name = file.nameWithoutExtension
             var format = "jpg"
@@ -116,20 +260,25 @@ object GisMbtilesHelper {
      * Builds an authentic offline osmdroid MapTileProviderArray pointing to the MBTiles archive.
      */
     fun createTileProvider(context: Context, meta: MbtilesMetadata): MapTileProviderArray {
-        val archive: IArchiveFile = MBTilesFileArchive.getDatabaseFileArchive(meta.file)
+        val archive = RobustMbtilesArchive(meta.file)
         archive.setIgnoreTileSource(true)
+
+        val cleanName = meta.name
+            .replace(Regex("[^a-zA-Z0-9_]"), "_")
+            .trim('_')
+            .ifBlank { "mbtiles_${meta.file.nameWithoutExtension}" }
 
         val formatExt = if (meta.format.startsWith(".")) meta.format else ".${meta.format}"
         val tileSource = XYTileSource(
-            meta.name,
-            meta.minZoom,
-            meta.maxZoom,
+            cleanName,
+            0,
+            22,
             256,
             formatExt,
             emptyArray()
         )
 
-        val registerReceiver = SimpleRegisterReceiver(context.applicationContext)
+        val registerReceiver = SafeRegisterReceiver(context.applicationContext)
         val archiveProvider = MapTileFileArchiveProvider(
             registerReceiver,
             tileSource,
@@ -235,4 +384,3 @@ object GisMbtilesHelper {
         }.getOrNull()
     }
 }
-

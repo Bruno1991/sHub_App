@@ -10,6 +10,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.OpenableColumns
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -217,17 +218,36 @@ fun GisScreen(
         if (currentBasemap == BasemapType.OFFLINE_MBTILES) {
             val meta = activeMbtilesMetadata
             if (meta != null) {
-                runCatching {
+                try {
+                    Log.i("ShubGisMbtiles", "Attaching offline MBTiles: ${meta.name} (${meta.file.absolutePath})")
                     val provider = GisMbtilesHelper.createTileProvider(context, meta)
                     map.setTileProvider(provider)
+                    map.setTileSource(provider.tileSource)
+                    map.invalidate()
+                    Log.i("ShubGisMbtiles", "Offline MBTiles provider attached: source=${provider.tileSource.name()}")
+                } catch (e: Throwable) {
+                    Log.e("ShubGisMbtiles", "Failed to switch to MBTiles provider: ${e.message}", e)
                 }
+            } else {
+                Log.w("ShubGisMbtiles", "OFFLINE_MBTILES selected but activeMbtilesMetadata is null")
             }
         } else {
-            runCatching {
+            try {
                 if (map.tileProvider !is MapTileProviderBasic) {
-                    map.setTileProvider(MapTileProviderBasic(context))
+                    val safeReceiver = GisMbtilesHelper.SafeRegisterReceiver(context.applicationContext)
+                    val basicProvider = MapTileProviderBasic(
+                        safeReceiver,
+                        org.osmdroid.tileprovider.modules.NetworkAvailabliltyCheck(context.applicationContext),
+                        GisTileSources.getTileSource(currentBasemap),
+                        context.applicationContext,
+                        null
+                    )
+                    map.setTileProvider(basicProvider)
                 }
-                map.setTileSource(GisTileSources.getTileSource(currentBasemap))
+                val tileSource = GisTileSources.getTileSource(currentBasemap)
+                map.setTileSource(tileSource)
+            } catch (e: Throwable) {
+                Log.e("ShubGisMbtiles", "Failed to switch basemap: ${e.message}", e)
             }
         }
         map.invalidate()

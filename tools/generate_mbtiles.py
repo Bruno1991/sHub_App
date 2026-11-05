@@ -44,12 +44,12 @@ def main():
         os.remove(output_path)
 
     print(f"=== Iniciando Geração de Pacote MBTiles: {output_path} ===")
-    
+
     # 1. Definir áreas de cobertura
     # Rondônia macro: -66.8 a -59.8 lon, -13.7 a -8.0 lat (zooms 0..10)
     # Região Operacional Ji-Paraná/SEs: -63.45 a -63.10 lon, -10.95 a -10.70 lat (zooms 11..14)
     # Área Urbana / Linhas: -63.35 a -63.20 lon, -10.90 a -10.80 lat (zooms 15..16)
-    
+
     tiles_to_download = set()
 
     # Macro Rondônia (Zooms 0 a 10)
@@ -90,10 +90,10 @@ def main():
     cur = conn.cursor()
     cur.execute("PRAGMA synchronous = OFF")
     cur.execute("PRAGMA journal_mode = MEMORY")
-    
+
     cur.execute("CREATE TABLE metadata (name text, value text);")
     cur.execute("CREATE TABLE tiles (zoom_level integer, tile_column integer, tile_row integer, tile_data blob);")
-    
+
     metadata = [
         ("name", "Google Satélite Rondônia"),
         ("type", "baselayer"),
@@ -146,3 +146,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
