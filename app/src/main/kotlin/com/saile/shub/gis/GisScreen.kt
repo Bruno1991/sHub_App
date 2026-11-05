@@ -91,6 +91,7 @@ fun GisScreen(
     val availableLayers by viewModel.availableLayers.collectAsState()
     val enabledLayers by viewModel.enabledLayers.collectAsState()
     val currentBasemap by viewModel.currentBasemap.collectAsState()
+    val networkMode by viewModel.networkMode.collectAsState()
     val activeMbtilesMetadata by viewModel.activeMbtilesMetadata.collectAsState()
     val availableMbtiles by viewModel.availableMbtiles.collectAsState()
     val isImportingMbtiles by viewModel.isImportingMbtiles.collectAsState()
@@ -216,16 +217,23 @@ fun GisScreen(
     }
 
     // Dynamic Basemap Switcher (Google Satellite, Hybrid, Esri, OSM, Topo, MBTiles)
-    LaunchedEffect(currentBasemap, activeMbtilesMetadata, mapViewRef) {
+    LaunchedEffect(currentBasemap, activeMbtilesMetadata, availableMbtiles, mapViewRef) {
         val map = mapViewRef ?: return@LaunchedEffect
         if (currentBasemap == BasemapType.OFFLINE_MBTILES) {
             val meta = activeMbtilesMetadata
-            if (meta != null) {
+            if (meta != null || availableMbtiles.isNotEmpty()) {
                 try {
-                    Log.i("ShubGisMbtiles", "Attaching offline MBTiles: ${meta.name} (${meta.file.absolutePath})")
-                    val provider = GisMbtilesHelper.createTileProvider(context, meta)
+                    val provider = if (availableMbtiles.size > 1) {
+                        Log.i("ShubGisMbtiles", "Attaching composite MBTiles (${availableMbtiles.size} packages in priority cascade)")
+                        GisMbtilesHelper.createCompositeTileProvider(context, availableMbtiles, enableFallback = true)
+                    } else {
+                        val target = meta ?: availableMbtiles.first()
+                        Log.i("ShubGisMbtiles", "Attaching offline MBTiles: ${target.name} (${target.file.absolutePath})")
+                        GisMbtilesHelper.createTileProvider(context, target, enableFallback = true)
+                    }
                     map.setTileProvider(provider)
                     map.setTileSource(provider.tileSource)
+                    map.overlayManager.tilesOverlay?.loadingBackgroundColor = android.graphics.Color.TRANSPARENT
                     map.tileProvider.clearTileCache()
                     map.invalidate()
                     Log.i("ShubGisMbtiles", "Offline MBTiles provider attached: source=${provider.tileSource.name()}")
@@ -1342,10 +1350,20 @@ fun GisScreen(
         AlertDialog(
             onDismissRequest = { showBasemapDialog = false },
             title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Layers, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Selecionar Mapa Base")
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Layers, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Selecionar Mapa Base")
+                    }
+                    if (networkMode == GisNetworkMode.OFFLINE_ONLY) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "🔒 Modo 100% Offline (Apenas MBTiles locais)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
             },
             text = {
@@ -1357,12 +1375,17 @@ fun GisScreen(
                 ) {
                     items(BasemapType.values()) { type ->
                         val isSelected = currentBasemap == type
+                        val isEnabled = networkMode != GisNetworkMode.OFFLINE_ONLY || type == BasemapType.OFFLINE_MBTILES
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            color = when {
+                                isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                                !isEnabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                            },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
+                                .clickable(enabled = isEnabled) {
                                     viewModel.setBasemap(type)
                                     if (type != BasemapType.OFFLINE_MBTILES) {
                                         showBasemapDialog = false

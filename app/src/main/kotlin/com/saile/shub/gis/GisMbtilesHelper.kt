@@ -15,7 +15,6 @@ import kotlinx.coroutines.withContext
 import org.osmdroid.tileprovider.IRegisterReceiver
 import org.osmdroid.tileprovider.MapTileProviderArray
 import org.osmdroid.tileprovider.modules.IArchiveFile
-import org.osmdroid.tileprovider.modules.MapTileApproximater
 import org.osmdroid.tileprovider.modules.MapTileFileArchiveProvider
 import org.osmdroid.tileprovider.tilesource.ITileSource
 import org.osmdroid.tileprovider.tilesource.XYTileSource
@@ -25,6 +24,16 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 
+/**
+ * GisMbtilesHelper.kt
+ *
+ * Responsabilidade Única:
+ * Núcleo de leitura, decodificação SQLite, conversão TMS/XYZ e construção de provedores
+ * de ladrilhos osmdroid (MapTileProviderArray) a partir de pacotes raster .mbtiles locais.
+ * Suporta provedor individual ou cascata determinística de múltiplos pacotes (CompositeMbtilesArchive)
+ * com fallback de zoom controlado (ControlledFallbackArchive).
+ */
+
 data class MbtilesMetadata(
     val file: File,
     val name: String,
@@ -32,7 +41,8 @@ data class MbtilesMetadata(
     val minZoom: Int,
     val maxZoom: Int,
     val bounds: BoundingBox?,
-    val sizeBytes: Long
+    val sizeBytes: Long,
+    val category: PackageCategory = PackageCategory.CUSTOM
 ) {
     val formattedSize: String
         get() {
@@ -183,6 +193,20 @@ object GisMbtilesHelper {
     }
 
     /**
+     * Infers operational package category from metadata name and file name.
+     */
+    fun inferCategory(name: String, file: File): PackageCategory {
+        val lower = "${name.lowercase()} ${file.nameWithoutExtension.lowercase()}"
+        return when {
+            lower.contains("corridor") || lower.contains("rede") || lower.contains("ativo") -> PackageCategory.NETWORK_CORRIDORS
+            lower.contains("cacoal") || lower.contains("porto_velho") || lower.contains("ji_parana") || lower.contains("vilhena") || lower.contains("polo") -> PackageCategory.MUNICIPAL_HD
+            lower.contains("rondonia") || lower.contains("regional") -> PackageCategory.REGIONAL
+            lower.contains("mundi") || lower.contains("world") || lower.contains("base") -> PackageCategory.WORLD_BASE
+            else -> PackageCategory.CUSTOM
+        }
+    }
+
+    /**
      * Reads metadata and tile information from an SQLite .mbtiles database.
      */
     fun readMetadata(file: File): MbtilesMetadata? {
@@ -217,7 +241,6 @@ object GisMbtilesHelper {
                                 "minzoom" -> minZoom = value.toIntOrNull() ?: minZoom
                                 "maxzoom" -> maxZoom = value.toIntOrNull() ?: maxZoom
                                 "bounds" -> {
-                                    // MBTiles 1.3 spec: bounds = "left,bottom,right,top" (minLon, minLat, maxLon, maxLat)
                                     val parts = value.split(",").mapNotNull { it.trim().toDoubleOrNull() }
                                     if (parts.size == 4) {
                                         val (minLon, minLat, maxLon, maxLat) = parts
@@ -230,7 +253,6 @@ object GisMbtilesHelper {
                 }
             }
 
-            // Fallback: Check actual tile zoom range if metadata table lacks zoom info
             if (minZoom == 0 && maxZoom == 20) {
                 runCatching {
                     db.rawQuery("SELECT MIN(zoom_level), MAX(zoom_level) FROM tiles", null).use { cursor ->
@@ -243,6 +265,7 @@ object GisMbtilesHelper {
             }
 
             val ext = if (format.startsWith(".")) format else ".$format"
+            val category = inferCategory(name, file)
             MbtilesMetadata(
                 file = file,
                 name = name,
@@ -250,7 +273,8 @@ object GisMbtilesHelper {
                 minZoom = minZoom,
                 maxZoom = maxZoom,
                 bounds = bounds,
-                sizeBytes = file.length()
+                sizeBytes = file.length(),
+                category = category
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error reading MBTiles metadata from ${file.name}: ${e.message}")
@@ -261,11 +285,22 @@ object GisMbtilesHelper {
     }
 
     /**
-     * Builds an authentic offline osmdroid MapTileProviderArray pointing to the MBTiles archive.
+     * Builds an authentic offline osmdroid MapTileProviderArray pointing to a single MBTiles archive,
+     * wrapped in ControlledFallbackArchive to prevent quadriculados.
      */
-    fun createTileProvider(context: Context, meta: MbtilesMetadata): MapTileProviderArray {
-        val archive = RobustMbtilesArchive(meta.file)
-        archive.setIgnoreTileSource(true)
+    fun createTileProvider(
+        context: Context,
+        meta: MbtilesMetadata,
+        enableFallback: Boolean = true
+    ): MapTileProviderArray {
+        val rawArchive = RobustMbtilesArchive(meta.file)
+        rawArchive.setIgnoreTileSource(true)
+
+        val controlledArchive = ControlledFallbackArchive(
+            delegate = rawArchive,
+            maxDownscaleLevels = 2,
+            enableFallback = enableFallback
+        )
 
         val cleanName = meta.name
             .replace(Regex("[^a-zA-Z0-9_]"), "_")
@@ -286,12 +321,10 @@ object GisMbtilesHelper {
         val archiveProvider = MapTileFileArchiveProvider(
             registerReceiver,
             tileSource,
-            arrayOf(archive),
+            arrayOf(controlledArchive),
             true
         )
 
-        // Native offline satellite: render direct from SQLite MBTiles archive
-        // without blurry approximations / pixelated squares ("quadriculados")
         return MapTileProviderArray(
             tileSource,
             registerReceiver,
@@ -300,7 +333,63 @@ object GisMbtilesHelper {
     }
 
     /**
-     * Scans device directories for .mbtiles files.
+     * Builds a composite multi-archive tile provider executing deterministic priority order:
+     * Network Corridors HD -> Municipal HD -> Regional -> World Base.
+     */
+    fun createCompositeTileProvider(
+        context: Context,
+        packages: List<MbtilesMetadata>,
+        enableFallback: Boolean = true
+    ): MapTileProviderArray {
+        if (packages.isEmpty()) {
+            throw IllegalArgumentException("Nenhum pacote MBTiles fornecido para provedor composto")
+        }
+
+        // Ordena estritamente por prioridade de categoria (1 = Corredores até 4 = Mundial)
+        val sorted = packages.sortedWith(
+            compareBy<MbtilesMetadata> { it.category.priority }
+                .thenByDescending { it.sizeBytes }
+        )
+
+        val rawArchives = sorted.map { RobustMbtilesArchive(it.file) }
+        val composite = CompositeMbtilesArchive(rawArchives)
+
+        val controlledArchive = ControlledFallbackArchive(
+            delegate = composite,
+            maxDownscaleLevels = 2,
+            enableFallback = enableFallback
+        )
+
+        val primary = sorted.first()
+        val cleanName = "composite_mbtiles"
+        val formatExt = if (primary.format.startsWith(".")) primary.format else ".${primary.format}"
+
+        val tileSource = XYTileSource(
+            cleanName,
+            0,
+            22,
+            256,
+            formatExt,
+            emptyArray()
+        )
+
+        val registerReceiver = SafeRegisterReceiver(context.applicationContext)
+        val archiveProvider = MapTileFileArchiveProvider(
+            registerReceiver,
+            tileSource,
+            arrayOf(controlledArchive),
+            true
+        )
+
+        return MapTileProviderArray(
+            tileSource,
+            registerReceiver,
+            arrayOf(archiveProvider)
+        )
+    }
+
+    /**
+     * Scans device directories for .mbtiles files, sorted by category priority.
      */
     fun scanAvailableMbtiles(context: Context): List<MbtilesMetadata> {
         val searchDirs = listOf(
@@ -330,7 +419,8 @@ object GisMbtilesHelper {
         }
 
         return results.sortedWith(
-            compareByDescending<MbtilesMetadata> { it.sizeBytes }
+            compareBy<MbtilesMetadata> { it.category.priority }
+                .thenByDescending { it.sizeBytes }
                 .thenByDescending { it.file.lastModified() }
         )
     }

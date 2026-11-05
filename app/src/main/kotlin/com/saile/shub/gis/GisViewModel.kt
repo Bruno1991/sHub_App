@@ -77,7 +77,10 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<GisState> = _state.asStateFlow()
 
     // Default to Google Hybrid for high-contrast engineering satellite view with roads
-    private val _currentBasemap = MutableStateFlow(BasemapType.GOOGLE_HYBRID)
+    private val _networkMode = MutableStateFlow(GisNetworkMode.OFFLINE_ONLY)
+    val networkMode: StateFlow<GisNetworkMode> = _networkMode.asStateFlow()
+
+    private val _currentBasemap = MutableStateFlow(BasemapType.OFFLINE_MBTILES)
     val currentBasemap: StateFlow<BasemapType> = _currentBasemap.asStateFlow()
 
     // QField Interaction Mode: BROWSE vs DIGITIZE
@@ -251,12 +254,24 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         _isLayersExpanded.value = !_isLayersExpanded.value
     }
 
+    fun setNetworkMode(mode: GisNetworkMode) {
+        _networkMode.value = mode
+        if (mode == GisNetworkMode.OFFLINE_ONLY) {
+            setBasemap(BasemapType.OFFLINE_MBTILES)
+        }
+    }
+
     fun setBasemap(type: BasemapType) {
+        if (_networkMode.value == GisNetworkMode.OFFLINE_ONLY && type != BasemapType.OFFLINE_MBTILES) {
+            Log.w("ShubGis", "Tentativa de ativar basemap online ($type) ignorada em modo OFFLINE_ONLY")
+            _currentBasemap.value = BasemapType.OFFLINE_MBTILES
+            return
+        }
         _currentBasemap.value = type
         if (type == BasemapType.OFFLINE_MBTILES && _activeMbtilesMetadata.value == null) {
             val list = _availableMbtiles.value
             if (list.isNotEmpty()) {
-                val best = list.maxByOrNull { it.sizeBytes } ?: list.first()
+                val best = list.minByOrNull { it.category.priority } ?: list.first()
                 _activeMbtilesMetadata.value = best
                 _offlineMbtilesPath.value = best.file.absolutePath
             } else {
@@ -317,13 +332,13 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
             val list = GisMbtilesHelper.scanAvailableMbtiles(getApplication())
             _availableMbtiles.value = list
             if (list.isNotEmpty()) {
-                val best = list.maxByOrNull { it.sizeBytes } ?: list.first()
+                val best = list.minByOrNull { it.category.priority } ?: list.first()
                 if (_activeMbtilesMetadata.value == null || _activeMbtilesMetadata.value?.file?.exists() != true) {
                     _activeMbtilesMetadata.value = best
                     _offlineMbtilesPath.value = best.file.absolutePath
                 }
-                // Automatically activate offline satellite basemap if default is online
-                if (_currentBasemap.value == BasemapType.GOOGLE_SATELLITE) {
+                // Automatically activate offline satellite basemap if network mode is OFFLINE_ONLY or default was online
+                if (_networkMode.value == GisNetworkMode.OFFLINE_ONLY || _currentBasemap.value == BasemapType.GOOGLE_SATELLITE || _currentBasemap.value == BasemapType.GOOGLE_HYBRID) {
                     _currentBasemap.value = BasemapType.OFFLINE_MBTILES
                 }
             }
