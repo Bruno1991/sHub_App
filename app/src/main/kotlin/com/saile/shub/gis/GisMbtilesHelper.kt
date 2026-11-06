@@ -52,6 +52,14 @@ data class MbtilesMetadata(
                 String.format(java.util.Locale.US, "%.1f MB", mb)
             }
         }
+
+    val importDateFormatted: String
+        get() {
+            return runCatching {
+                val sdf = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault())
+                sdf.format(java.util.Date(file.lastModified()))
+            }.getOrDefault("--/--/----")
+        }
 }
 
 object GisMbtilesHelper {
@@ -487,6 +495,13 @@ object GisMbtilesHelper {
                         }
                     }
                     output.flush()
+                }
+            }
+
+            targetFile.setLastModified(System.currentTimeMillis())
+            targetDir.listFiles()?.forEach { f ->
+                if (f.isFile && f.absolutePath != targetFile.absolutePath) {
+                    runCatching { f.delete() }
                 }
             }
 

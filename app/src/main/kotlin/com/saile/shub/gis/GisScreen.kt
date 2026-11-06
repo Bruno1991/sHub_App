@@ -91,6 +91,8 @@ fun GisScreen(
     val availableLayers by viewModel.availableLayers.collectAsState()
     val enabledLayers by viewModel.enabledLayers.collectAsState()
     val activeGpkgName by viewModel.activeGpkgName.collectAsState()
+    val activeGpkgSizeFormatted by viewModel.activeGpkgSizeFormatted.collectAsState()
+    val activeGpkgImportDate by viewModel.activeGpkgImportDate.collectAsState()
     val activeGpkgSrs by viewModel.activeGpkgSrs.collectAsState()
     val currentBasemap by viewModel.currentBasemap.collectAsState()
     val networkMode by viewModel.networkMode.collectAsState()
@@ -208,53 +210,50 @@ fun GisScreen(
         }
     }
 
-    // Initialize OsmDroid with High-Performance Cache
-    LaunchedEffect(Unit) {
+    // Initialize OsmDroid synchronously before MapView instantiation
+    remember {
         val osmConfig = Configuration.getInstance()
         osmConfig.load(context, context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
-        osmConfig.userAgentValue = context.packageName
+        osmConfig.userAgentValue = "${context.packageName}/2.1 (Android; sGis)"
         osmConfig.tileFileSystemCacheMaxBytes = 3L * 1024L * 1024L * 1024L // 3 GB
         osmConfig.tileFileSystemCacheTrimBytes = 2L * 1024L * 1024L * 1024L // 2 GB
         osmConfig.expirationExtendedDuration = 1000L * 60L * 60L * 24L * 365L * 10L // 10 years
+        true
     }
 
     // Dynamic Basemap Switcher (MBTiles Offline and Mapa de Ruas OSM)
     LaunchedEffect(currentBasemap, activeMbtilesMetadata, availableMbtiles, mapViewRef) {
         val map = mapViewRef ?: return@LaunchedEffect
-        if (currentBasemap == BasemapType.OFFLINE_MBTILES) {
-            val target = activeMbtilesMetadata ?: availableMbtiles.firstOrNull()
-            if (target != null) {
-                try {
-                    Log.i("ShubGisMbtiles", "Attaching offline MBTiles: ${target.name} (${target.file.absolutePath})")
-                    val provider = GisMbtilesHelper.createTileProvider(context, target, enableFallback = true)
-                    map.setUseDataConnection(false)
-                    map.setTileProvider(provider)
-                    map.setTileSource(provider.tileSource)
-                    map.overlayManager.tilesOverlay?.loadingBackgroundColor = android.graphics.Color.TRANSPARENT
-                    map.tileProvider.clearTileCache()
-                    map.invalidate()
-                    Log.i("ShubGisMbtiles", "Offline MBTiles provider attached: source=${provider.tileSource.name()}")
-                } catch (e: Throwable) {
-                    Log.e("ShubGisMbtiles", "Failed to switch to MBTiles provider: ${e.message}", e)
-                }
-            } else {
-                Log.w("ShubGisMbtiles", "OFFLINE_MBTILES selected but activeMbtilesMetadata is null")
+        val targetMbtiles = activeMbtilesMetadata ?: availableMbtiles.firstOrNull()
+        if (currentBasemap == BasemapType.OFFLINE_MBTILES && targetMbtiles != null) {
+            try {
+                Log.i("ShubGisMbtiles", "Attaching offline MBTiles: ${targetMbtiles.name} (${targetMbtiles.file.absolutePath})")
+                val provider = GisMbtilesHelper.createTileProvider(context, targetMbtiles, enableFallback = true)
+                map.setUseDataConnection(false)
+                map.setTileProvider(provider)
+                map.setTileSource(provider.tileSource)
+                map.overlayManager.tilesOverlay?.loadingBackgroundColor = android.graphics.Color.TRANSPARENT
+                map.tileProvider.clearTileCache()
+                map.invalidate()
+                Log.i("ShubGisMbtiles", "Offline MBTiles provider attached: source=${provider.tileSource.name()}")
+            } catch (e: Throwable) {
+                Log.e("ShubGisMbtiles", "Failed to switch to MBTiles provider: ${e.message}", e)
             }
         } else {
             try {
                 map.setUseDataConnection(true)
+                val tileSource = GisTileSources.getTileSource(BasemapType.STREETS)
                 if (map.tileProvider !is MapTileProviderBasic) {
                     val safeReceiver = GisMbtilesHelper.SafeRegisterReceiver(context.applicationContext)
                     val basicProvider = MapTileProviderBasic(
                         safeReceiver,
                         org.osmdroid.tileprovider.modules.NetworkAvailabliltyCheck(context.applicationContext),
-                        GisTileSources.getTileSource(currentBasemap),
+                        tileSource,
                         context.applicationContext,
-                        null
+                        org.osmdroid.tileprovider.modules.TileWriter()
                     )
                     map.setTileProvider(basicProvider)
                 }
-                val tileSource = GisTileSources.getTileSource(currentBasemap)
                 map.setTileSource(tileSource)
                 map.tileProvider.clearTileCache()
             } catch (e: Throwable) {
@@ -427,10 +426,10 @@ fun GisScreen(
         }
     }
 
-    // Dashboard Left Navigation Drawer (Opens ONLY when clicking hamburger button)
+    // Dashboard Left Navigation Drawer (Opens ONLY when clicking hamburger button; closes when clicking right side of screen)
     ModalNavigationDrawer(
         drawerState = drawerState,
-        gesturesEnabled = false,
+        gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             ModalDrawerSheet(
                 modifier = Modifier.width(320.dp),
@@ -445,12 +444,12 @@ fun GisScreen(
                             .statusBarsPadding()
                             .padding(16.dp)
                     ) {
-                        Column {
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Filled.Map, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+                                Icon(Icons.Filled.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
-                                    text = "sGis - Cartografia",
+                                    text = "sGis Configurações",
                                     style = MaterialTheme.typography.titleLarge.copy(
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onSurface
@@ -459,18 +458,40 @@ fun GisScreen(
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = activeGpkgName?.let { "Elementos: $it" } ?: "Nenhum .gpkg importado",
-                                style = MaterialTheme.typography.bodyMedium.copy(
+                                text = activeGpkgName?.let { "Elementos: $it" } ?: "Elementos (.gpkg): Nenhum importado",
+                                style = MaterialTheme.typography.bodySmall.copy(
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.primary
-                                )
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
+                            activeGpkgImportDate?.let { date ->
+                                Text(
+                                    text = "Data de importação (.gpkg): $date",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = activeGpkgSrs ?: "Formatos: .gpkg (Elementos) • .mbtiles (Mapa Base)",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                text = activeMbtilesMetadata?.let { "Satélite: ${it.file.name}" } ?: "Satélite (.mbtiles): Nenhum importado",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
+                            activeMbtilesMetadata?.let { meta ->
+                                Text(
+                                    text = "Data de importação (.mbtiles): ${meta.importDateFormatted}",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                )
+                            }
                         }
                     }
 
@@ -598,25 +619,7 @@ fun GisScreen(
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         NavigationDrawerItem(
-                            icon = { Icon(Icons.Filled.Layers, contentDescription = null) },
-                            label = { Text("Mapa Base: ${currentBasemap.displayName}") },
-                            selected = false,
-                            onClick = {
-                                coroutineScope.launch { drawerState.close() }
-                                showBasemapDialog = true
-                            }
-                        )
-                        NavigationDrawerItem(
-                            icon = { Icon(Icons.Filled.Archive, contentDescription = null) },
-                            label = { Text("Importar Mapa Base (.mbtiles)") },
-                            selected = false,
-                            onClick = {
-                                coroutineScope.launch { drawerState.close() }
-                                mbtilesLauncher.launch(arrayOf("*/*"))
-                            }
-                        )
-                        NavigationDrawerItem(
-                            icon = { Icon(Icons.Filled.FileUpload, contentDescription = null) },
+                            icon = { Icon(Icons.Filled.FileDownload, contentDescription = null) },
                             label = { Text("Importar Elementos (.gpkg)") },
                             selected = false,
                             onClick = {
@@ -625,8 +628,17 @@ fun GisScreen(
                             }
                         )
                         NavigationDrawerItem(
+                            icon = { Icon(Icons.Filled.FileDownload, contentDescription = null) },
+                            label = { Text("Importar Camadas Satélite (.mbtiles)") },
+                            selected = false,
+                            onClick = {
+                                coroutineScope.launch { drawerState.close() }
+                                mbtilesLauncher.launch(arrayOf("*/*"))
+                            }
+                        )
+                        NavigationDrawerItem(
                             icon = { Icon(Icons.Filled.Info, contentDescription = null) },
-                            label = { Text("Informações dos Arquivos") },
+                            label = { Text("Informações do Módulo sGis") },
                             selected = false,
                             onClick = {
                                 coroutineScope.launch { drawerState.close() }
@@ -655,41 +667,12 @@ fun GisScreen(
                                 .padding(horizontal = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Hamburger Menu Icon
+                            // Hamburger Menu Icon (3 lines to open side drawer)
                             IconButton(onClick = { coroutineScope.launch { drawerState.open() } }) {
-                                Icon(Icons.Filled.Menu, contentDescription = "Painel de Camadas", tint = MaterialTheme.colorScheme.onSurface)
+                                Icon(Icons.Filled.Menu, contentDescription = "sGis Configurações", tint = MaterialTheme.colorScheme.onSurface)
                             }
 
-                            Spacer(modifier = Modifier.width(4.dp))
-
-                            // Project Name Badge matching sHub Theme
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(
-                                    text = "sGis",
-                                    style = MaterialTheme.typography.titleLarge.copy(
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Surface(
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    modifier = Modifier.padding(horizontal = 4.dp)
-                                ) {
-                                    Text(
-                                        text = activeGpkgName ?: ".gpkg / .mbtiles",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                    )
-                                }
-                            }
+                            Spacer(modifier = Modifier.weight(1f))
 
                             // GNSS Positioning Status Pill
                             Surface(
@@ -1602,28 +1585,37 @@ fun GisScreen(
         )
     }
 
-    // Dialog: Project / Files Information
+    // Dialog: sGis Module Information
     if (showProjectInfoDialog) {
+        val totalFeatures = availableLayers.sumOf { it.featureCount }
         AlertDialog(
             onDismissRequest = { showProjectInfoDialog = false },
-            title = { Text("Informações dos Arquivos") },
+            title = { Text("Informações do Módulo sGis") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        text = "Elementos (.gpkg): ${activeGpkgName ?: "Nenhum arquivo importado"}",
-                        fontWeight = FontWeight.Bold
+                        text = "Versão do Módulo: sGis v2.1.0",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
                     )
-                    Text("Projeção: ${activeGpkgSrs ?: "Definida pelo arquivo .gpkg"}")
-                    Text("Camadas Carregadas: ${availableLayers.size}")
-                    val totalFeatures = availableLayers.sumOf { it.featureCount }
-                    Text("Total de Elementos: $totalFeatures")
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     Text(
-                        text = "Mapa Base (.mbtiles): ${activeMbtilesMetadata?.file?.name ?: "Nenhum arquivo ativo"}",
+                        text = "Elementos (.gpkg)",
                         fontWeight = FontWeight.Bold
                     )
+                    Text("Arquivo: ${activeGpkgName ?: "Nenhum arquivo importado"}")
+                    Text("Tamanho: ${activeGpkgSizeFormatted ?: "--"}")
+                    Text("Total de Elementos: $totalFeatures (${availableLayers.size} camadas)")
+                    activeGpkgImportDate?.let { Text("Data da Importação: $it") }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Text(
+                        text = "Camada Satélite (.mbtiles)",
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text("Arquivo: ${activeMbtilesMetadata?.file?.name ?: "Nenhum arquivo importado"}")
+                    Text("Tamanho: ${activeMbtilesMetadata?.formattedSize ?: "--"}")
                     activeMbtilesMetadata?.let { meta ->
-                        Text("Zooms: ${meta.minZoom} a ${meta.maxZoom} (${meta.formattedSize})")
+                        Text("Data da Importação: ${meta.importDateFormatted}")
                     }
                 }
             },

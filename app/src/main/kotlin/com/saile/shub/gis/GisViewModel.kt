@@ -93,6 +93,12 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     private val _activeGpkgName = MutableStateFlow<String?>(null)
     val activeGpkgName: StateFlow<String?> = _activeGpkgName.asStateFlow()
 
+    private val _activeGpkgSizeFormatted = MutableStateFlow<String?>(null)
+    val activeGpkgSizeFormatted: StateFlow<String?> = _activeGpkgSizeFormatted.asStateFlow()
+
+    private val _activeGpkgImportDate = MutableStateFlow<String?>(null)
+    val activeGpkgImportDate: StateFlow<String?> = _activeGpkgImportDate.asStateFlow()
+
     private val _activeGpkgSrs = MutableStateFlow<String?>(null)
     val activeGpkgSrs: StateFlow<String?> = _activeGpkgSrs.asStateFlow()
 
@@ -173,6 +179,8 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
             val file = getActiveGpkgFile()
             if (file == null) {
                 _activeGpkgName.value = null
+                _activeGpkgSizeFormatted.value = null
+                _activeGpkgImportDate.value = null
                 _activeGpkgSrs.value = null
                 Log.w("ShubGis", "loadActiveDataset: No active GPKG file found")
                 return@launch
@@ -185,6 +193,16 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 _activeGpkgName.value = file.name
+                val mb = file.length() / (1024.0 * 1024.0)
+                _activeGpkgSizeFormatted.value = if (mb >= 1024.0) {
+                    String.format(java.util.Locale.US, "%.2f GB", mb / 1024.0)
+                } else {
+                    String.format(java.util.Locale.US, "%.1f MB", mb)
+                }
+                _activeGpkgImportDate.value = runCatching {
+                    val sdf = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault())
+                    sdf.format(java.util.Date(file.lastModified()))
+                }.getOrDefault("--/--/----")
                 _activeGpkgSrs.value = reader.getDatasetSrsDescription()
 
                 // Ensure high-performance SQLite search indexes exist in the background (sub-1ms lookup like QField)
