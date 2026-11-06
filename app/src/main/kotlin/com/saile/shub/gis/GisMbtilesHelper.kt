@@ -29,9 +29,8 @@ import java.io.InputStream
  *
  * Responsabilidade Única:
  * Núcleo de leitura, decodificação SQLite, conversão TMS/XYZ e construção de provedores
- * de ladrilhos osmdroid (MapTileProviderArray) a partir de pacotes raster .mbtiles locais.
- * Suporta provedor individual ou cascata determinística de múltiplos pacotes (CompositeMbtilesArchive)
- * com fallback de zoom controlado (ControlledFallbackArchive).
+ * de ladrilhos osmdroid (MapTileProviderArray) a partir de pacotes raster .mbtiles locais,
+ * de forma 100% imparcial ao nome do arquivo importado.
  */
 
 data class MbtilesMetadata(
@@ -93,12 +92,13 @@ object GisMbtilesHelper {
 
     /**
      * Highly resilient SQLite IArchiveFile implementation for .mbtiles.
-     * Prevents connection pool closures and handles both standard TMS and XYZ row coordinates.
+     * Uses strict OGC MBTiles 1.3 TMS row orientation unless metadata explicitly declares scheme=xyz.
      */
     class RobustMbtilesArchive(val file: File) : IArchiveFile {
         private var database: SQLiteDatabase? = null
         private val lock = Any()
         private var hitCounter = 0L
+        private var isXyzScheme = false
 
         init {
             openDb()
@@ -108,11 +108,13 @@ object GisMbtilesHelper {
             synchronized(lock) {
                 if (database?.isOpen == true) return true
                 return try {
-                    database = SQLiteDatabase.openDatabase(
+                    val db = SQLiteDatabase.openDatabase(
                         file.absolutePath,
                         null,
                         SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS
                     )
+                    database = db
+                    isXyzScheme = detectXyzScheme(db)
                     true
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to open MBTiles database ${file.name}: ${e.message}")
@@ -121,14 +123,29 @@ object GisMbtilesHelper {
             }
         }
 
+        private fun detectXyzScheme(db: SQLiteDatabase): Boolean {
+            return runCatching {
+                db.rawQuery(
+                    "SELECT value FROM metadata WHERE LOWER(name) = 'scheme' LIMIT 1",
+                    null
+                ).use { cursor ->
+                    if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                        cursor.getString(0)?.trim()?.equals("xyz", ignoreCase = true) == true
+                    } else false
+                }
+            }.getOrDefault(false)
+        }
+
         override fun init(pFile: File) {
             synchronized(lock) {
                 runCatching { database?.close() }
-                database = SQLiteDatabase.openDatabase(
+                val db = SQLiteDatabase.openDatabase(
                     pFile.absolutePath,
                     null,
                     SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS
                 )
+                database = db
+                isXyzScheme = detectXyzScheme(db)
             }
         }
 
@@ -138,7 +155,7 @@ object GisMbtilesHelper {
             val y = MapTileIndex.getY(pMapTileIndex)
 
             // MBTiles 1.3 spec: tile_row is inverted TMS coordinate -> (2^zoom - 1) - y
-            val tmsY = (1 shl zoom) - 1 - y
+            val targetRow = if (isXyzScheme) y else ((1 shl zoom) - 1 - y)
 
             synchronized(lock) {
                 if (database?.isOpen != true) {
@@ -146,24 +163,19 @@ object GisMbtilesHelper {
                 }
                 val db = database ?: return null
 
-                // 1. Try standard MBTiles TMS row
-                var stream = queryTile(db, zoom, x, tmsY)
-                // 2. Fallback to standard XYZ row if not found and tmsY != y
-                if (stream == null && tmsY != y) {
-                    stream = queryTile(db, zoom, x, y)
-                }
-                if (stream != null && (hitCounter++ % 15L == 0L)) {
-                    Log.d(TAG, "MBTiles HIT: z=$zoom x=$x y=$y (tmsY=$tmsY) [${file.name}]")
+                val stream = queryTile(db, zoom, x, targetRow)
+                if (stream != null && (hitCounter++ % 25L == 0L)) {
+                    Log.d(TAG, "MBTiles HIT: z=$zoom x=$x y=$y (row=$targetRow) [${file.name}]")
                 }
                 return stream
             }
         }
 
-        private fun queryTile(db: SQLiteDatabase, zoom: Int, x: Int, y: Int): InputStream? {
+        private fun queryTile(db: SQLiteDatabase, zoom: Int, x: Int, row: Int): InputStream? {
             return try {
                 db.rawQuery(
                     "SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ? LIMIT 1",
-                    arrayOf(zoom.toString(), x.toString(), y.toString())
+                    arrayOf(zoom.toString(), x.toString(), row.toString())
                 ).use { cursor ->
                     if (cursor.moveToFirst() && !cursor.isNull(0)) {
                         val bytes = cursor.getBlob(0)
@@ -173,7 +185,7 @@ object GisMbtilesHelper {
                     } else null
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Error querying tile z=$zoom x=$x y=$y: ${e.message}")
+                Log.w(TAG, "Error querying tile z=$zoom x=$x row=$row: ${e.message}")
                 null
             }
         }
@@ -193,15 +205,16 @@ object GisMbtilesHelper {
     }
 
     /**
-     * Infers operational package category from metadata name and file name.
+     * Infers operational package category purely from zoom levels and metadata,
+     * completely impartial to specific filenames or city names.
      */
-    fun inferCategory(name: String, file: File): PackageCategory {
-        val lower = "${name.lowercase()} ${file.nameWithoutExtension.lowercase()}"
+    fun inferCategory(minZoom: Int, maxZoom: Int, bounds: BoundingBox?): PackageCategory {
+        val lonSpan = bounds?.let { kotlin.math.abs(it.maxLon - it.minLon) } ?: 360.0
         return when {
-            lower.contains("corridor") || lower.contains("rede") || lower.contains("ativo") -> PackageCategory.NETWORK_CORRIDORS
-            lower.contains("cacoal") || lower.contains("porto_velho") || lower.contains("ji_parana") || lower.contains("vilhena") || lower.contains("polo") -> PackageCategory.MUNICIPAL_HD
-            lower.contains("rondonia") || lower.contains("regional") -> PackageCategory.REGIONAL
-            lower.contains("mundi") || lower.contains("world") || lower.contains("base") -> PackageCategory.WORLD_BASE
+            minZoom >= 14 && maxZoom >= 17 -> PackageCategory.NETWORK_CORRIDORS
+            maxZoom >= 17 && lonSpan < 5.0 -> PackageCategory.MUNICIPAL_HD
+            maxZoom >= 12 && lonSpan < 30.0 -> PackageCategory.REGIONAL
+            minZoom == 0 && lonSpan >= 180.0 -> PackageCategory.WORLD_BASE
             else -> PackageCategory.CUSTOM
         }
     }
@@ -253,19 +266,17 @@ object GisMbtilesHelper {
                 }
             }
 
-            if (minZoom == 0 && maxZoom == 20) {
-                runCatching {
-                    db.rawQuery("SELECT MIN(zoom_level), MAX(zoom_level) FROM tiles", null).use { cursor ->
-                        if (cursor.moveToFirst()) {
-                            if (!cursor.isNull(0)) minZoom = cursor.getInt(0)
-                            if (!cursor.isNull(1)) maxZoom = cursor.getInt(1)
-                        }
+            runCatching {
+                db.rawQuery("SELECT MIN(zoom_level), MAX(zoom_level) FROM tiles", null).use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        if (!cursor.isNull(0)) minZoom = cursor.getInt(0)
+                        if (!cursor.isNull(1)) maxZoom = cursor.getInt(1)
                     }
                 }
             }
 
             val ext = if (format.startsWith(".")) format else ".$format"
-            val category = inferCategory(name, file)
+            val category = inferCategory(minZoom, maxZoom, bounds)
             MbtilesMetadata(
                 file = file,
                 name = name,
@@ -286,7 +297,7 @@ object GisMbtilesHelper {
 
     /**
      * Builds an authentic offline osmdroid MapTileProviderArray pointing to a single MBTiles archive,
-     * wrapped in ControlledFallbackArchive to prevent quadriculados.
+     * wrapped in ControlledFallbackArchive with quadrant cropping up to 8 zoom levels above maxZoom.
      */
     fun createTileProvider(
         context: Context,
@@ -298,14 +309,13 @@ object GisMbtilesHelper {
 
         val controlledArchive = ControlledFallbackArchive(
             delegate = rawArchive,
-            maxDownscaleLevels = 2,
+            maxDownscaleLevels = 8,
             enableFallback = enableFallback
         )
 
-        val cleanName = meta.name
-            .replace(Regex("[^a-zA-Z0-9_]"), "_")
+        val cleanName = "mbtiles_${meta.file.nameWithoutExtension.replace(Regex("[^a-zA-Z0-9_]"), "_")}"
             .trim('_')
-            .ifBlank { "mbtiles_${meta.file.nameWithoutExtension}" }
+            .ifBlank { "offline_mbtiles" }
 
         val formatExt = if (meta.format.startsWith(".")) meta.format else ".${meta.format}"
         val tileSource = XYTileSource(
@@ -333,21 +343,21 @@ object GisMbtilesHelper {
     }
 
     /**
-     * Builds a composite multi-archive tile provider executing deterministic priority order:
-     * Network Corridors HD -> Municipal HD -> Regional -> World Base.
+     * Builds a composite multi-archive tile provider placing the active selected package first.
      */
     fun createCompositeTileProvider(
         context: Context,
         packages: List<MbtilesMetadata>,
+        primaryMeta: MbtilesMetadata? = null,
         enableFallback: Boolean = true
     ): MapTileProviderArray {
         if (packages.isEmpty()) {
             throw IllegalArgumentException("Nenhum pacote MBTiles fornecido para provedor composto")
         }
 
-        // Ordena estritamente por prioridade de categoria (1 = Corredores até 4 = Mundial)
         val sorted = packages.sortedWith(
-            compareBy<MbtilesMetadata> { it.category.priority }
+            compareByDescending<MbtilesMetadata> { it.file.absolutePath == primaryMeta?.file?.absolutePath }
+                .thenBy { it.category.priority }
                 .thenByDescending { it.sizeBytes }
         )
 
@@ -356,12 +366,12 @@ object GisMbtilesHelper {
 
         val controlledArchive = ControlledFallbackArchive(
             delegate = composite,
-            maxDownscaleLevels = 2,
+            maxDownscaleLevels = 8,
             enableFallback = enableFallback
         )
 
         val primary = sorted.first()
-        val cleanName = "composite_mbtiles"
+        val cleanName = "composite_${primary.file.nameWithoutExtension.replace(Regex("[^a-zA-Z0-9_]"), "_")}"
         val formatExt = if (primary.format.startsWith(".")) primary.format else ".${primary.format}"
 
         val tileSource = XYTileSource(
@@ -389,11 +399,12 @@ object GisMbtilesHelper {
     }
 
     /**
-     * Scans device directories for .mbtiles files, sorted by category priority.
+     * Scans device directories for .mbtiles files, prioritizing internal imported files first.
      */
     fun scanAvailableMbtiles(context: Context): List<MbtilesMetadata> {
+        val internalDir = File(context.filesDir, "mbtiles")
         val searchDirs = listOf(
-            File(context.filesDir, "mbtiles"),
+            internalDir,
             context.getExternalFilesDir(null),
             context.getExternalFilesDir("mbtiles"),
             File("/sdcard/Download"),
@@ -419,9 +430,9 @@ object GisMbtilesHelper {
         }
 
         return results.sortedWith(
-            compareBy<MbtilesMetadata> { it.category.priority }
-                .thenByDescending { it.sizeBytes }
+            compareByDescending<MbtilesMetadata> { it.file.parentFile?.absolutePath == internalDir.absolutePath }
                 .thenByDescending { it.file.lastModified() }
+                .thenByDescending { it.sizeBytes }
         )
     }
 
@@ -434,7 +445,7 @@ object GisMbtilesHelper {
         onProgress: (Int, Long, Long) -> Unit = { _, _, _ -> }
     ): MbtilesMetadata? = withContext(Dispatchers.IO) {
         runCatching {
-            var fileName = "imported_${System.currentTimeMillis()}.mbtiles"
+            var fileName = "mapa_${System.currentTimeMillis()}.mbtiles"
             var fileSize = -1L
 
             context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -452,11 +463,14 @@ object GisMbtilesHelper {
             }
 
             val targetDir = File(context.filesDir, "mbtiles").apply { mkdirs() }
-            val targetFile = File(targetDir, fileName)
+            val safeName = fileName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank {
+                "mapa_${System.currentTimeMillis()}.mbtiles"
+            }
+            val targetFile = File(targetDir, safeName)
 
             context.contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(targetFile).use { output ->
-                    val buffer = ByteArray(64 * 1024)
+                    val buffer = ByteArray(128 * 1024)
                     var totalBytes = 0L
                     var bytesRead: Int
                     var lastPercent = -1

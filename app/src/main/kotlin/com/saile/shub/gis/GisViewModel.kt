@@ -87,8 +87,14 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     private val _interactionMode = MutableStateFlow(GisInteractionMode.BROWSE)
     val interactionMode: StateFlow<GisInteractionMode> = _interactionMode.asStateFlow()
 
-    private val _activeEditLayer = MutableStateFlow<String?>("BASE ERO – Poste de Distribuição")
+    private val _activeEditLayer = MutableStateFlow<String?>(null)
     val activeEditLayer: StateFlow<String?> = _activeEditLayer.asStateFlow()
+
+    private val _activeGpkgName = MutableStateFlow<String?>(null)
+    val activeGpkgName: StateFlow<String?> = _activeGpkgName.asStateFlow()
+
+    private val _activeGpkgSrs = MutableStateFlow<String?>(null)
+    val activeGpkgSrs: StateFlow<String?> = _activeGpkgSrs.asStateFlow()
 
     private val _isLayersExpanded = MutableStateFlow(true)
     val isLayersExpanded: StateFlow<Boolean> = _isLayersExpanded.asStateFlow()
@@ -166,6 +172,8 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val file = getActiveGpkgFile()
             if (file == null) {
+                _activeGpkgName.value = null
+                _activeGpkgSrs.value = null
                 Log.w("ShubGis", "loadActiveDataset: No active GPKG file found")
                 return@launch
             }
@@ -175,6 +183,9 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                     Log.w("ShubGis", "loadActiveDataset: could not open reader for ${file.absolutePath}")
                     return@launch
                 }
+
+                _activeGpkgName.value = file.name
+                _activeGpkgSrs.value = reader.getDatasetSrsDescription()
 
                 // Ensure high-performance SQLite search indexes exist in the background (sub-1ms lookup like QField)
                 viewModelScope.launch(Dispatchers.IO) {
@@ -262,21 +273,21 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setBasemap(type: BasemapType) {
-        if (_networkMode.value == GisNetworkMode.OFFLINE_ONLY && type != BasemapType.OFFLINE_MBTILES) {
-            Log.w("ShubGis", "Tentativa de ativar basemap online ($type) ignorada em modo OFFLINE_ONLY")
-            _currentBasemap.value = BasemapType.OFFLINE_MBTILES
-            return
-        }
         _currentBasemap.value = type
-        if (type == BasemapType.OFFLINE_MBTILES && _activeMbtilesMetadata.value == null) {
-            val list = _availableMbtiles.value
-            if (list.isNotEmpty()) {
-                val best = list.minByOrNull { it.category.priority } ?: list.first()
-                _activeMbtilesMetadata.value = best
-                _offlineMbtilesPath.value = best.file.absolutePath
-            } else {
-                refreshAvailableMbtiles()
+        if (type == BasemapType.OFFLINE_MBTILES) {
+            _networkMode.value = GisNetworkMode.OFFLINE_ONLY
+            if (_activeMbtilesMetadata.value == null) {
+                val list = _availableMbtiles.value
+                if (list.isNotEmpty()) {
+                    val best = list.minByOrNull { it.category.priority } ?: list.first()
+                    _activeMbtilesMetadata.value = best
+                    _offlineMbtilesPath.value = best.file.absolutePath
+                } else {
+                    refreshAvailableMbtiles()
+                }
             }
+        } else {
+            _networkMode.value = GisNetworkMode.ONLINE_ALLOWED
         }
     }
 
@@ -337,8 +348,7 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                     _activeMbtilesMetadata.value = best
                     _offlineMbtilesPath.value = best.file.absolutePath
                 }
-                // Automatically activate offline satellite basemap if network mode is OFFLINE_ONLY or default was online
-                if (_networkMode.value == GisNetworkMode.OFFLINE_ONLY || _currentBasemap.value == BasemapType.GOOGLE_SATELLITE || _currentBasemap.value == BasemapType.GOOGLE_HYBRID) {
+                if (_networkMode.value == GisNetworkMode.OFFLINE_ONLY) {
                     _currentBasemap.value = BasemapType.OFFLINE_MBTILES
                 }
             }

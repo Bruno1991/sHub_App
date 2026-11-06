@@ -17,11 +17,12 @@ O **sGis** é o Sistema de Informações Geográficas (GIS) móvel 100% offline 
 
 | Arquivo | Responsabilidade |
 |---|---|
-| `GeoPackageReader.kt` / `GpkgReader.kt` | Leitura direta de tabelas vetoriais GeoPackage, decodificação de geometrias WKB (`POINT`, `LINESTRING`, `POLYGON`, `MULTILINESTRING`) e filtragem espacial instantânea via índice SQLite R-Tree (`rtree_<tabela>_<geom>`). |
-| `GisMbtilesHelper.kt` | `RobustMbtilesArchive`: leitor SQLite MBTiles com detecção automática de formato (JPEG/PNG/WebP), conversão TMS (`(1 << z) - 1 - y`) e fallback para esquema XYZ. |
-| `CompositeMbtilesArchive.kt` | Composição hierárquica de múltiplos arquivos MBTiles (`HD Corredor z15–z19` → `Regional Rondônia z8–z14` → `Overview Mundial z0–z7`). |
-| `ControlledFallbackArchive.kt` | Síntese controlada de tiles por *overzoom* até `maxDeltaZ = 2` níveis acima do máximo disponível, recortando o sub-quadrante exato e estampando aviso visual `"ZOOM APROXIMADO"`. |
-| `GisNetworkMode.kt` | Política explícita de rede (`OFFLINE_ONLY` como padrão estrito, `ONLINE_FALLBACK`, `ONLINE_ONLY`). |
+| `GpkgReader.kt` | Leitura imparcial de qualquer arquivo `.gpkg` importado, inspeção dinâmica de SRS (`gpkg_contents`), decodificação WKB (`POINT`, `LINESTRING`, `POLYGON`, `MULTILINESTRING`) e filtragem espacial instantânea via índice SQLite R-Tree (`rtree_<tabela>_<geom>`). |
+| `GisBasemapHelper.kt` | Configuração enxuta de camadas de mapa base restrita exclusivamente a `MBTiles Offline (.mbtiles)` (`OFFLINE_MBTILES`) e `Mapa de Ruas (OSM)` (`STREETS`). |
+| `GisMbtilesHelper.kt` | `RobustMbtilesArchive`: leitor SQLite `.mbtiles` imparcial com detecção do esquema (`tms` vs `xyz`) via tabela `metadata`, evitando falsos positivos de hemisfério oposto em *cache misses*. |
+| `CompositeMbtilesArchive.kt` | Composição hierárquica de múltiplos arquivos `.mbtiles` priorizando o arquivo selecionado pelo operador. |
+| `ControlledFallbackArchive.kt` | Síntese controlada de tiles por *overzoom* até `maxDownscaleLevels = 8` níveis acima do nível nativo, recortando matematicamente o sub-quadrante exato (`cropAndScaleQuadrant`) com filtragem bilinear e cache `LruCache` de tiles ancestrais. |
+| `GisNetworkMode.kt` | Política explícita de rede (`OFFLINE_ONLY` para `.mbtiles`, `HYBRID_CACHE` para `Mapa de Ruas (OSM)`). |
 | `PackageManifest.kt` & `OfflinePackageManager.kt` | Manifesto JSON puro (`manifest.json`), verificação de integridade SHA-256 e instalação atômica via diretório `.staging`. |
 | `GisLocationTracker.kt` | Rastreamento GNSS (priorizando GPS sobre Rede) + bússola com filtro passa-baixa e *deadband* de `2.0°`, desacoplado via `CoreLocationUtils`. |
 | `GisElectricalSymbology.kt` | Simbologia técnica para Postes, Transformadores, Chaves Seccionadoras/Fusíveis, Subestações e Vãos MT/BT. |

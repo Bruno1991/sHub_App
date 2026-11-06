@@ -205,6 +205,27 @@ class GpkgReader(private val gpkgFilePath: String) : AutoCloseable {
         }.getOrNull()
     }
 
+    fun getDatasetSrsDescription(): String {
+        val database = db ?: return "GeoPackage (.gpkg)"
+        return runCatching {
+            val srsIds = mutableSetOf<Int>()
+            database.rawQuery(
+                "SELECT DISTINCT srs_id FROM gpkg_contents WHERE data_type = 'features' AND srs_id IS NOT NULL",
+                null
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val srs = cursor.getInt(0)
+                    if (srs > 0) srsIds.add(srs)
+                }
+            }
+            if (srsIds.isEmpty()) {
+                "WGS 84 / GeoPackage"
+            } else {
+                srsIds.sorted().joinToString(" / ") { "EPSG:$it" }
+            }
+        }.getOrDefault("GeoPackage (.gpkg)")
+    }
+
     fun classifyLayer(layer: String): GisElementType {
         val norm = Normalizer.normalize(layer, Normalizer.Form.NFD)
             .replace(Regex("\\p{M}"), "")

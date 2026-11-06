@@ -90,6 +90,8 @@ fun GisScreen(
     val datasetExtent by viewModel.datasetExtent.collectAsState()
     val availableLayers by viewModel.availableLayers.collectAsState()
     val enabledLayers by viewModel.enabledLayers.collectAsState()
+    val activeGpkgName by viewModel.activeGpkgName.collectAsState()
+    val activeGpkgSrs by viewModel.activeGpkgSrs.collectAsState()
     val currentBasemap by viewModel.currentBasemap.collectAsState()
     val networkMode by viewModel.networkMode.collectAsState()
     val activeMbtilesMetadata by viewModel.activeMbtilesMetadata.collectAsState()
@@ -216,21 +218,16 @@ fun GisScreen(
         osmConfig.expirationExtendedDuration = 1000L * 60L * 60L * 24L * 365L * 10L // 10 years
     }
 
-    // Dynamic Basemap Switcher (Google Satellite, Hybrid, Esri, OSM, Topo, MBTiles)
+    // Dynamic Basemap Switcher (MBTiles Offline and Mapa de Ruas OSM)
     LaunchedEffect(currentBasemap, activeMbtilesMetadata, availableMbtiles, mapViewRef) {
         val map = mapViewRef ?: return@LaunchedEffect
         if (currentBasemap == BasemapType.OFFLINE_MBTILES) {
-            val meta = activeMbtilesMetadata
-            if (meta != null || availableMbtiles.isNotEmpty()) {
+            val target = activeMbtilesMetadata ?: availableMbtiles.firstOrNull()
+            if (target != null) {
                 try {
-                    val provider = if (availableMbtiles.size > 1) {
-                        Log.i("ShubGisMbtiles", "Attaching composite MBTiles (${availableMbtiles.size} packages in priority cascade)")
-                        GisMbtilesHelper.createCompositeTileProvider(context, availableMbtiles, enableFallback = true)
-                    } else {
-                        val target = meta ?: availableMbtiles.first()
-                        Log.i("ShubGisMbtiles", "Attaching offline MBTiles: ${target.name} (${target.file.absolutePath})")
-                        GisMbtilesHelper.createTileProvider(context, target, enableFallback = true)
-                    }
+                    Log.i("ShubGisMbtiles", "Attaching offline MBTiles: ${target.name} (${target.file.absolutePath})")
+                    val provider = GisMbtilesHelper.createTileProvider(context, target, enableFallback = true)
+                    map.setUseDataConnection(false)
                     map.setTileProvider(provider)
                     map.setTileSource(provider.tileSource)
                     map.overlayManager.tilesOverlay?.loadingBackgroundColor = android.graphics.Color.TRANSPARENT
@@ -245,6 +242,7 @@ fun GisScreen(
             }
         } else {
             try {
+                map.setUseDataConnection(true)
                 if (map.tileProvider !is MapTileProviderBasic) {
                     val safeReceiver = GisMbtilesHelper.SafeRegisterReceiver(context.applicationContext)
                     val basicProvider = MapTileProviderBasic(
@@ -401,12 +399,12 @@ fun GisScreen(
         }
     }
 
-    // File Picker for importing another GPKG
+    // File Picker for importing a GeoPackage (.gpkg)
     val gpkgLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            var displayName = "BASE.gpkg"
+            var displayName = "elementos_${System.currentTimeMillis()}.gpkg"
             context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                 if (cursor.moveToFirst()) {
                     val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
@@ -461,14 +459,14 @@ fun GisScreen(
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Projeto: BASE.gpkg",
+                                text = activeGpkgName?.let { "Elementos: $it" } ?: "Nenhum .gpkg importado",
                                 style = MaterialTheme.typography.bodyMedium.copy(
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             )
                             Text(
-                                text = "SIRGAS 2000 / UTM 20S (EPSG:31980 / 4674)",
+                                text = activeGpkgSrs ?: "Formatos: .gpkg (Elementos) • .mbtiles (Mapa Base)",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -610,7 +608,7 @@ fun GisScreen(
                         )
                         NavigationDrawerItem(
                             icon = { Icon(Icons.Filled.Archive, contentDescription = null) },
-                            label = { Text("Importar MBTiles Offline") },
+                            label = { Text("Importar Mapa Base (.mbtiles)") },
                             selected = false,
                             onClick = {
                                 coroutineScope.launch { drawerState.close() }
@@ -619,7 +617,7 @@ fun GisScreen(
                         )
                         NavigationDrawerItem(
                             icon = { Icon(Icons.Filled.FileUpload, contentDescription = null) },
-                            label = { Text("Importar Outro GeoPackage") },
+                            label = { Text("Importar Elementos (.gpkg)") },
                             selected = false,
                             onClick = {
                                 coroutineScope.launch { drawerState.close() }
@@ -628,7 +626,7 @@ fun GisScreen(
                         )
                         NavigationDrawerItem(
                             icon = { Icon(Icons.Filled.Info, contentDescription = null) },
-                            label = { Text("Informações do Projeto") },
+                            label = { Text("Informações dos Arquivos") },
                             selected = false,
                             onClick = {
                                 coroutineScope.launch { drawerState.close() }
@@ -683,9 +681,11 @@ fun GisScreen(
                                     modifier = Modifier.padding(horizontal = 4.dp)
                                 ) {
                                     Text(
-                                        text = "BASE.gpkg",
+                                        text = activeGpkgName ?: ".gpkg / .mbtiles",
                                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                     )
                                 }
@@ -1345,7 +1345,7 @@ fun GisScreen(
         )
     }
 
-    // Dialog: Basemap Selection (Google Satellite Hybrid, Pure, MBTiles, Esri, OSM, Topo)
+    // Dialog: Basemap Selection (MBTiles Offline and Mapa de Ruas OSM)
     if (showBasemapDialog) {
         AlertDialog(
             onDismissRequest = { showBasemapDialog = false },
@@ -1356,14 +1356,12 @@ fun GisScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Selecionar Mapa Base")
                     }
-                    if (networkMode == GisNetworkMode.OFFLINE_ONLY) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "🔒 Modo 100% Offline (Apenas MBTiles locais)",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (currentBasemap == BasemapType.OFFLINE_MBTILES) "🔒 Modo Offline (.mbtiles)" else "🗺️ Mapa de Ruas (OSM)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             },
             text = {
@@ -1375,17 +1373,16 @@ fun GisScreen(
                 ) {
                     items(BasemapType.values()) { type ->
                         val isSelected = currentBasemap == type
-                        val isEnabled = networkMode != GisNetworkMode.OFFLINE_ONLY || type == BasemapType.OFFLINE_MBTILES
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = when {
-                                isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
-                                !isEnabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
-                                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                            color = if (isSelected) {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable(enabled = isEnabled) {
+                                .clickable {
                                     viewModel.setBasemap(type)
                                     if (type != BasemapType.OFFLINE_MBTILES) {
                                         showBasemapDialog = false
@@ -1605,18 +1602,29 @@ fun GisScreen(
         )
     }
 
-    // Dialog: Project Information
+    // Dialog: Project / Files Information
     if (showProjectInfoDialog) {
         AlertDialog(
             onDismissRequest = { showProjectInfoDialog = false },
-            title = { Text("Propriedades do Projeto") },
+            title = { Text("Informações dos Arquivos") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Arquivo: BASE.gpkg", fontWeight = FontWeight.Bold)
-                    Text("Projeção: SIRGAS 2000 / UTM 20S (EPSG 31980 / 4674)")
-                    Text("Camadas Ativas: ${availableLayers.size}")
+                    Text(
+                        text = "Elementos (.gpkg): ${activeGpkgName ?: "Nenhum arquivo importado"}",
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text("Projeção: ${activeGpkgSrs ?: "Definida pelo arquivo .gpkg"}")
+                    Text("Camadas Carregadas: ${availableLayers.size}")
                     val totalFeatures = availableLayers.sumOf { it.featureCount }
-                    Text("Total de Ativos: $totalFeatures")
+                    Text("Total de Elementos: $totalFeatures")
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Text(
+                        text = "Mapa Base (.mbtiles): ${activeMbtilesMetadata?.file?.name ?: "Nenhum arquivo ativo"}",
+                        fontWeight = FontWeight.Bold
+                    )
+                    activeMbtilesMetadata?.let { meta ->
+                        Text("Zooms: ${meta.minZoom} a ${meta.maxZoom} (${meta.formattedSize})")
+                    }
                 }
             },
             confirmButton = {

@@ -43,7 +43,9 @@ class ImportGpkgUseCase(
             gpkgDir.mkdirs()
         }
 
-        val safeName = displayName.replace(Regex("[^a-zA-Z0-9.-]"), "_").ifBlank { "BASE.gpkg" }
+        val safeName = displayName.replace(Regex("[^a-zA-Z0-9.-]"), "_").ifBlank {
+            "elementos_${System.currentTimeMillis()}.gpkg"
+        }
         val destFile = File(gpkgDir, safeName)
         if (destFile.exists()) {
             runCatching { destFile.delete() }
