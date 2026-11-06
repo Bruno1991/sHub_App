@@ -2,6 +2,7 @@ package com.saile.shub.ui
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -28,9 +30,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.caverock.androidsvg.SVG
 
+private val svgBitmapCache = LruCache<String, ImageBitmap>(16)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onNavigate: (Destination) -> Unit) {
+fun HomeScreen(
+    onNavigate: (Destination) -> Unit,
+    tools: List<HubToolDescriptor> = HubToolRegistry.tools,
+) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -98,33 +105,17 @@ fun HomeScreen(onNavigate: (Destination) -> Unit) {
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Tool Cards
-            ToolCard(
-                title = "sGeoConversor",
-                badge = "UTM ⇄ GEO",
-                description = "Conversão rápida UTM/GEO, cópia de coordenadas e rotas no Google Maps.",
-                assetPath = "app_hub/sgeoconversor.svg",
-                accentGradient = listOf(Color(0xFF6366F1), Color(0xFF3B82F6), Color(0xFF06B6D4)),
-                onClick = { onNavigate(Destination.CONVERTER) }
-            )
-
-            ToolCard(
-                title = "sFoto",
-                badge = "Câmera & Timestamp",
-                description = "Câmera de campo com carimbo de coordenadas UTM, GEO, data/hora, endereço e logo oficial.",
-                assetPath = "app_hub/sfoto.svg",
-                accentGradient = listOf(Color(0xFFFF416C), Color(0xFFFF4B2B)),
-                onClick = { onNavigate(Destination.PHOTO) }
-            )
-
-            ToolCard(
-                title = "sGIS",
-                badge = "QField • GPKG",
-                description = "Port nativo do QField com motor espacial GeoPackage, GPS integrado do sFoto, medição e cadastro.",
-                assetPath = "app_hub/sgis.svg",
-                accentGradient = listOf(Color(0xFF4E731B), Color(0xFF7AA136)),
-                onClick = { onNavigate(Destination.GIS) }
-            )
+            // Modular Tool Cards
+            tools.filter { it.enabled }.forEach { tool ->
+                ToolCard(
+                    title = tool.title,
+                    badge = tool.badge,
+                    description = tool.description,
+                    assetPath = tool.assetPath,
+                    accentGradient = tool.accentGradient,
+                    onClick = { onNavigate(tool.destination) }
+                )
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -262,7 +253,7 @@ private fun HubAssetSvgIcon(
 ) {
     val context = LocalContext.current
     val imageBitmap = remember(assetPath) {
-        runCatching {
+        svgBitmapCache.get(assetPath) ?: runCatching {
             context.assets.open(assetPath).use { stream ->
                 val svg = SVG.getFromInputStream(stream)
                 val renderWidth = 512
@@ -281,7 +272,9 @@ private fun HubAssetSvgIcon(
                     svg.documentWidth = origWidth
                     svg.documentHeight = origHeight
                 }
-                bmp.asImageBitmap()
+                bmp.asImageBitmap().also { rendered ->
+                    svgBitmapCache.put(assetPath, rendered)
+                }
             }
         }.getOrNull()
     }

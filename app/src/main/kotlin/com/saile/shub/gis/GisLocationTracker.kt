@@ -15,7 +15,7 @@ import androidx.core.content.ContextCompat
 import com.saile.shub.core.geo.GeoCoordinate
 import com.saile.shub.core.geo.UtmCoordinate
 import com.saile.shub.core.geo.UtmConverter
-import com.saile.shub.photo.location.LocationUtils
+import com.saile.shub.core.location.CoreLocationUtils
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -72,8 +72,8 @@ class GisLocationTracker(private val context: Context) : LocationListener, Senso
         if (isTracking) return
         isTracking = true
 
-        // 1. Initial location from sFoto LocationUtils
-        val initialLoc = LocationUtils.lastKnownLocation(context)
+        // 1. Initial location from shared CoreLocationUtils
+        val initialLoc = CoreLocationUtils.lastKnownLocation(context)
         if (initialLoc != null) {
             updateLocation(initialLoc)
         }
@@ -167,7 +167,12 @@ class GisLocationTracker(private val context: Context) : LocationListener, Senso
             speedKmh = if (loc.hasSpeed()) loc.speed * 3.6f else null,
             bearingDegrees = if (loc.hasBearing()) loc.bearing else null,
             provider = loc.provider ?: "GPS",
-            isMock = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) loc.isMock else loc.isFromMockProvider
+            isMock = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                loc.isMock
+            } else {
+                @Suppress("DEPRECATION")
+                loc.isFromMockProvider
+            }
         )
     }
 

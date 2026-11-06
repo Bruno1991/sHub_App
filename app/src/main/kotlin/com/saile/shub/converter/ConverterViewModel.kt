@@ -16,6 +16,7 @@ data class ConverterUiState(
     val latitude: String = "-22.951761169561568",
     val longitude: String = "-43.21047133691749",
     val zone: String = "23",
+    val targetZone: String = "",
     val hemisphere: Hemisphere = Hemisphere.SOUTH,
     val easting: String = "683479.47",
     val northing: String = "7460703.39",
@@ -32,6 +33,7 @@ class ConverterViewModel : ViewModel() {
     fun updateLatitude(value: String) = mutableState.update { it.copy(latitude = value) }
     fun updateLongitude(value: String) = mutableState.update { it.copy(longitude = value) }
     fun updateZone(value: String) = mutableState.update { it.copy(zone = value) }
+    fun updateTargetZone(value: String) = mutableState.update { it.copy(targetZone = value) }
     fun updateEasting(value: String) = mutableState.update { it.copy(easting = value) }
     fun updateNorthing(value: String) = mutableState.update { it.copy(northing = value) }
     fun updateHemisphere(value: Hemisphere) = mutableState.update { it.copy(hemisphere = value) }
@@ -39,20 +41,31 @@ class ConverterViewModel : ViewModel() {
     fun convert() {
         val current = mutableState.value
         runCatching {
+            val forcedTargetZone = current.targetZone.trim().takeIf { it.isNotEmpty() }?.let {
+                it.toIntOrNull()
+                    ?: throw IllegalArgumentException("Zona UTM de destino deve ser um número entre 1 e 60.")
+            }
+
             when (current.mode) {
                 ConversionMode.GEO_TO_UTM -> {
                     val geo = GeoCoordinate(current.latitude.toCoordinate(), current.longitude.toCoordinate())
-                    geo to UtmConverter.geoToUtm(geo)
+                    geo to UtmConverter.geoToUtm(geo, forcedZone = forcedTargetZone)
                 }
                 ConversionMode.UTM_TO_GEO -> {
-                    val utm = UtmCoordinate(
-                        zone = current.zone.toIntOrNull()
+                    val sourceUtm = UtmCoordinate(
+                        zone = current.zone.trim().toIntOrNull()
                             ?: throw IllegalArgumentException("Zona UTM deve ser um número entre 1 e 60."),
                         hemisphere = current.hemisphere,
                         easting = current.easting.toCoordinate(),
                         northing = current.northing.toCoordinate(),
                     )
-                    UtmConverter.utmToGeo(utm) to utm
+                    val geo = UtmConverter.utmToGeo(sourceUtm)
+                    val resultUtm = if (forcedTargetZone != null) {
+                        UtmConverter.convertUtmZone(sourceUtm, forcedTargetZone)
+                    } else {
+                        sourceUtm
+                    }
+                    geo to resultUtm
                 }
             }
         }.onSuccess { (geo, utm) ->
@@ -64,6 +77,6 @@ class ConverterViewModel : ViewModel() {
         }
     }
 
-    private fun String.toCoordinate(): Double = replace(',', '.').toDoubleOrNull()
+    private fun String.toCoordinate(): Double = trim().replace(',', '.').toDoubleOrNull()
         ?: throw IllegalArgumentException("Informe uma coordenada numérica válida.")
 }

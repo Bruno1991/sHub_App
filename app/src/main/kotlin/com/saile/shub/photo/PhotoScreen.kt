@@ -50,6 +50,11 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 
+private class LiveOverlaySensorState {
+    @Volatile
+    var azimuthDegrees: Float? = null
+}
+
 @Composable
 fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
     val context = LocalContext.current
@@ -68,6 +73,11 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
         ImageLoader.Builder(context)
             .components { add(VideoFrameDecoder.Factory()) }
             .build()
+    }
+    DisposableEffect(imageLoader) {
+        onDispose {
+            imageLoader.shutdown()
+        }
     }
 
     var isSettingsOpen by remember { mutableStateOf(false) }
@@ -108,7 +118,7 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
     var resolvedAddress by remember { mutableStateOf<String?>(null) }
     
     var location by remember { mutableStateOf(LocationUtils.lastKnownLocation(context)) }
-    var currentTime by remember { mutableStateOf(Date()) }
+    val liveSensorState = remember { LiveOverlaySensorState() }
     var isVideoMode by remember { mutableStateOf(false) }
     var recordingUiState by remember { mutableStateOf(VideoRecordingUiState.IDLE) }
     var isPhotoCapturing by remember { mutableStateOf(false) }
@@ -120,11 +130,10 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
     var cameraRetryToken by remember { mutableIntStateOf(0) }
     
     var deviceOrientationAngle by remember { mutableStateOf(0f) }
-    var currentAzimuthDegrees by remember { mutableStateOf<Float?>(null) }
     var isFrontFlashActive by remember { mutableStateOf(false) }
     val isCaptureScreenVisible = !isSettingsOpen && !isGalleryOpen
 
-    fun currentOverlay(capturedAt: Date = currentTime): PhotoOverlay = PhotoOverlay(
+    fun currentOverlay(capturedAt: Date = Date()): PhotoOverlay = PhotoOverlay(
         color = state.overlayColor,
         location = location,
         capturedAt = capturedAt,
@@ -136,7 +145,7 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
         showAltitude = state.showAltitude,
         showAzimuth = state.showAzimuth,
         showBackgroundBox = state.showBackgroundBox,
-        azimuthDegrees = currentAzimuthDegrees,
+        azimuthDegrees = liveSensorState.azimuthDegrees,
         userName = state.userName,
         position = state.position,
         resolvedAddress = resolvedAddress,
@@ -338,7 +347,7 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
                 val prev = lastReportedDeg
                 if (prev == null || abs(newDeg - prev) >= 1.0f) {
                     lastReportedDeg = newDeg
-                    currentAzimuthDegrees = newDeg
+                    liveSensorState.azimuthDegrees = newDeg
                 }
             }
 
@@ -409,13 +418,6 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
             runCatching { manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 1000L, 0f, listener) }
         }
         onDispose { runCatching { manager.removeUpdates(listener) } }
-    }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            currentTime = Date()
-            delay(1000)
-        }
     }
 
     LaunchedEffect(location) {
@@ -667,9 +669,14 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
 
         if (isGalleryOpen) {
             com.saile.shub.photo.ui.GalleryScreen(
-                onClose = { 
-                    isGalleryOpen = false 
-                    lastPhotoUri = MediaUtils.getLastTakenMediaUri(context)
+                onClose = {
+                    isGalleryOpen = false
+                    coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val uri = MediaUtils.getLastTakenMediaUri(context)
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            lastPhotoUri = uri
+                        }
+                    }
                 }
             )
         }

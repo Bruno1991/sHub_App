@@ -143,12 +143,7 @@ object OverlayRenderer {
             return current
         }
 
-        val geo = GeoCoordinate(lat, lon)
-        val utm = UtmConverter.geoToUtm(geo)
-        val bands = "CDEFGHJKLMNPQRSTUVWX"
-        val bandIndex = ((lat + 80) / 8).toInt().coerceIn(0, bands.length - 1)
-        val band = bands[bandIndex]
-        val utmText = "${utm.zone}$band %.0f %.0f".format(Locale.US, utm.easting, utm.northing)
+        val utmText = UtmConverter.formatUtm(lat, lon).takeIf { it != "--" } ?: "indisponível"
         val geoText = "%.7f, %.7f".format(Locale.US, lat, lon)
         val altitudeText = when {
             alt != null && acc != null -> "Alt: %.0fm (±%.1fm)".format(Locale.US, alt, acc)

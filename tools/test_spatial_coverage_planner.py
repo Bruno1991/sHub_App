@@ -40,7 +40,7 @@ class TestSpatialCoveragePlanner(unittest.TestCase):
 
         self.assertIsNotNone(buffered_wgs84)
         min_lon, min_lat, max_lon, max_lat = buffered_wgs84.bounds
-        
+
         delta_lat = max_lat - min_lat
         delta_lon = max_lon - min_lon
 

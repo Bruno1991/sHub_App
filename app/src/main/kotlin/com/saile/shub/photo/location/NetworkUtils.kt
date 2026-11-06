@@ -1,14 +1,11 @@
 package com.saile.shub.photo.location
 
 import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
+import com.saile.shub.core.location.CoreNetworkUtils
 
+/**
+ * Delegates to [CoreNetworkUtils] for backward compatibility within sFoto.
+ */
 object NetworkUtils {
-    fun isNetworkAvailable(context: Context): Boolean {
-        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = connectivityManager.activeNetwork ?: return false
-        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-    }
+    fun isNetworkAvailable(context: Context): Boolean = CoreNetworkUtils.isNetworkAvailable(context)
 }

@@ -48,6 +48,7 @@ class PhotoCapture(private val executor: Executor) {
     @Volatile internal var pendingPhotoOverlay: PhotoOverlay? = null
     private var recording: Recording? = null
     private val metadataExecutor = Executors.newSingleThreadExecutor()
+    private var shutterSound: android.media.MediaActionSound? = null
 
     fun startRecording(
         context: Context,
@@ -136,10 +137,10 @@ class PhotoCapture(private val executor: Executor) {
         }
         if (playSound) {
             runCatching {
-                android.media.MediaActionSound().apply {
+                val sound = shutterSound ?: android.media.MediaActionSound().apply {
                     load(android.media.MediaActionSound.SHUTTER_CLICK)
-                    play(android.media.MediaActionSound.SHUTTER_CLICK)
-                }
+                }.also { shutterSound = it }
+                sound.play(android.media.MediaActionSound.SHUTTER_CLICK)
             }
         }
         val name = "sHub_${SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(overlay.capturedAt)}"
@@ -282,6 +283,10 @@ class PhotoCapture(private val executor: Executor) {
 
     fun close() {
         stopRecording()
+        runCatching {
+            shutterSound?.release()
+            shutterSound = null
+        }
         metadataExecutor.shutdown()
     }
     

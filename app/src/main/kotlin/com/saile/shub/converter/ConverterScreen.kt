@@ -30,11 +30,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.saile.shub.converter.ConversionMode
-import com.saile.shub.converter.ConverterUiState
-import com.saile.shub.converter.ConverterViewModel
 import com.saile.shub.core.geo.GeoCoordinate
 import com.saile.shub.core.geo.Hemisphere
+import com.saile.shub.core.geo.UtmConverter
 import com.saile.shub.core.geo.UtmCoordinate
 import java.util.Locale
 
@@ -78,12 +76,20 @@ fun ConverterScreen(
             } else {
                 UtmInputs(state, viewModel)
             }
+            OutlinedTextField(
+                value = state.targetZone,
+                onValueChange = viewModel::updateTargetZone,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Zona UTM de destino (opcional, ex.: 20 ou 21)") },
+                singleLine = true,
+            )
             Button(onClick = viewModel::convert, modifier = Modifier.fillMaxWidth()) { Text("Converter") }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (geo != null && utm != null && link != null) {
                 ResultCard(
                     geo = formatGeo(geo.latitude, geo.longitude),
-                    utm = formatUtm(utm),
+                    dms = UtmConverter.formatDms(geo.latitude, geo.longitude),
+                    utm = formatUtm(utm, geo.latitude),
                     link = link,
                     onCopy = { clipboard.setText(AnnotatedString(it)) },
                     onRoute = {
@@ -153,6 +159,7 @@ private fun UtmInputs(state: ConverterUiState, viewModel: ConverterViewModel) {
 @Composable
 private fun ResultCard(
     geo: String,
+    dms: String,
     utm: String,
     link: String,
     onCopy: (String) -> Unit,
@@ -162,7 +169,8 @@ private fun ResultCard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Resultado", style = MaterialTheme.typography.titleLarge)
             HorizontalDivider()
-            Text("GEO\n$geo")
+            Text("GEO (Decimal)\n$geo")
+            Text("GEO (DMS)\n$dms", style = MaterialTheme.typography.bodyMedium)
             Text("UTM\n$utm")
             Text("Link\n$link", style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -184,10 +192,11 @@ private fun formatGeo(latitude: Double, longitude: Double): String = String.form
     longitude,
 )
 
-private fun formatUtm(utm: UtmCoordinate): String = String.format(
+private fun formatUtm(utm: UtmCoordinate, latitude: Double): String = String.format(
     Locale.US,
-    "Zona %d %s | X: %.2f, Y: %.2f",
+    "Zona %d%c (%s) | X: %.2f, Y: %.2f",
     utm.zone,
+    UtmConverter.getUtmBand(latitude),
     if (utm.hemisphere == Hemisphere.SOUTH) "S" else "N",
     utm.easting,
     utm.northing,

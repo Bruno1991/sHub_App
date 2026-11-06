@@ -36,7 +36,7 @@ def lonlat_to_tile(lon: float, lat: float, zoom: int) -> Tuple[int, int]:
     x = int(math.floor((lon + 180.0) / 360.0 * n))
     # Proteção para borda leste 180.0
     x = max(0, min(x, n - 1))
-    
+
     sin_lat = math.sin(lat_rad)
     y = int(math.floor((1.0 - math.log((1.0 + sin_lat) / (1.0 - sin_lat)) / (2.0 * math.pi)) / 2.0 * n))
     y = max(0, min(y, n - 1))
@@ -67,7 +67,7 @@ def tile_bounds_3857(z: int, x: int, y: int) -> Tuple[float, float, float, float
     initial_resolution = 2.0 * math.pi * R_EARTH / 256.0
     origin_shift = 2.0 * math.pi * R_EARTH / 2.0
     res = initial_resolution / (1 << z)
-    
+
     min_x = x * 256.0 * res - origin_shift
     max_x = (x + 1) * 256.0 * res - origin_shift
     max_y = origin_shift - y * 256.0 * res
@@ -98,12 +98,12 @@ def envelope_to_tiles(min_lon: float, min_lat: float, max_lon: float, max_lat: f
     """
     x1, y2 = lonlat_to_tile(min_lon, min_lat, zoom)
     x2, y1 = lonlat_to_tile(max_lon, max_lat, zoom)
-    
+
     min_x = min(x1, x2)
     max_x = max(x1, x2)
     min_y = min(y1, y2)
     max_y = max(y1, y2)
-    
+
     for x in range(min_x, max_x + 1):
         for y in range(min_y, max_y + 1):
             yield (zoom, x, y)
@@ -118,7 +118,7 @@ def geometry_to_tiles(geometry, zoom: int, use_strtree: bool = True) -> Set[Tupl
 
     min_lon, min_lat, max_lon, max_lat = geometry.bounds
     candidate_tiles = list(envelope_to_tiles(min_lon, min_lat, max_lon, max_lat, zoom))
-    
+
     if len(candidate_tiles) <= 1:
         # Se for um único tile abrangente, verifica diretamente
         z, x, y = candidate_tiles[0]

@@ -2,6 +2,7 @@
 .env
 *.env
 .env.*
+!.env.example
 gradle.properties
 secrets/
 
@@ -31,8 +32,10 @@ captures/
 *.gpkg
 *.mbtiles
 
-# Logs & temp
+# Logs, Python cache & temp
 *.log
 *.tmp
+__pycache__/
+*.py[cod]
 .DS_Store
 Thumbs.db

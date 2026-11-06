@@ -1,6 +1,8 @@
 package com.saile.shub.core.geo
 
+import java.util.Locale
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.pow
@@ -9,8 +11,10 @@ import kotlin.math.sqrt
 import kotlin.math.tan
 
 /**
- * Pure WGS84 UTM converter. It intentionally has no Android dependency so it can be
- * verified by JVM tests and reused by camera and GIS features.
+ * Pure WGS84 UTM converter (Snyder / Redfearn Transverse Mercator expansion).
+ *
+ * Intentionally has no Android dependency so it can be verified by JVM unit tests
+ * and reused across sGeoConversor, sFoto, and sGis.
  */
 object UtmConverter {
     private const val semiMajorAxis = 6_378_137.0
@@ -22,11 +26,19 @@ object UtmConverter {
     private const val maxUtmLatitude = 84.0
 
     fun geoToUtm(coordinate: GeoCoordinate, forcedZone: Int? = null): UtmCoordinate {
+        require(!coordinate.latitude.isNaN() && !coordinate.longitude.isNaN()) {
+            "Coordenadas geográficas não podem ser NaN."
+        }
         require(coordinate.latitude in minUtmLatitude..maxUtmLatitude) {
             "Latitude deve estar entre $minUtmLatitude e $maxUtmLatitude para UTM."
         }
         require(coordinate.longitude in -180.0..180.0) {
             "Longitude deve estar entre -180 e 180."
+        }
+        if (forcedZone != null) {
+            require(forcedZone in 1..60) {
+                "Zona UTM deve estar entre 1 e 60."
+            }
         }
 
         val zone = forcedZone ?: if (coordinate.longitude == 180.0) 60 else {
@@ -62,6 +74,9 @@ object UtmConverter {
 
     fun utmToGeo(coordinate: UtmCoordinate): GeoCoordinate {
         require(coordinate.zone in 1..60) { "Zona UTM deve estar entre 1 e 60." }
+        require(!coordinate.easting.isNaN() && !coordinate.northing.isNaN()) {
+            "Coordenadas UTM não podem ser NaN."
+        }
         require(coordinate.easting in 0.0..1_000_000.0) {
             "Easting deve estar entre 0 e 1000000 metros."
         }
@@ -104,8 +119,19 @@ object UtmConverter {
     }
 
     /**
-     * Determines the UTM latitude band character (C to X, omitting I and O).
-     * Matches the standard used across sFoto and QGIS.
+     * Converts a UTM coordinate from its current zone into [targetZone] (1..60),
+     * supporting inter-zone reprojection (e.g., Rondônia transition between Zone 20S and 21S).
+     */
+    fun convertUtmZone(coordinate: UtmCoordinate, targetZone: Int): UtmCoordinate {
+        require(targetZone in 1..60) { "Zona UTM de destino deve estar entre 1 e 60." }
+        if (coordinate.zone == targetZone) return coordinate
+        val geo = utmToGeo(coordinate)
+        return geoToUtm(geo, forcedZone = targetZone)
+    }
+
+    /**
+     * Determines the MGRS/UTM latitude band character (C to X, omitting I and O).
+     * Note that band X spans 12 degrees (72°N to 84°N).
      */
     fun getUtmBand(latitude: Double): Char {
         val bands = "CDEFGHJKLMNPQRSTUVWX"
@@ -122,7 +148,7 @@ object UtmConverter {
             val geo = GeoCoordinate(latitude, longitude)
             val utm = geoToUtm(geo)
             val band = getUtmBand(latitude)
-            "${utm.zone}$band %.0f %.0f".format(java.util.Locale.US, utm.easting, utm.northing)
+            "${utm.zone}$band %.0f %.0f".format(Locale.US, utm.easting, utm.northing)
         }.getOrDefault("--")
     }
 
@@ -132,7 +158,28 @@ object UtmConverter {
      */
     fun formatUtm(utm: UtmCoordinate, latitude: Double): String {
         val band = getUtmBand(latitude)
-        return "${utm.zone}$band %.0f %.0f".format(java.util.Locale.US, utm.easting, utm.northing)
+        return "${utm.zone}$band %.0f %.0f".format(Locale.US, utm.easting, utm.northing)
+    }
+
+    /**
+     * Formats decimal degrees into Degrees-Minutes-Seconds (DMS) representation.
+     */
+    fun formatDms(latitude: Double, longitude: Double): String {
+        return "${formatSingleDms(latitude, isLatitude = true)}, ${formatSingleDms(longitude, isLatitude = false)}"
+    }
+
+    fun formatSingleDms(decimalDegrees: Double, isLatitude: Boolean): String {
+        val hemisphereChar = if (isLatitude) {
+            if (decimalDegrees < 0.0) 'S' else 'N'
+        } else {
+            if (decimalDegrees < 0.0) 'W' else 'E'
+        }
+        val absDeg = abs(decimalDegrees)
+        val degrees = floor(absDeg).toInt()
+        val minutesFull = (absDeg - degrees) * 60.0
+        val minutes = floor(minutesFull).toInt()
+        val seconds = (minutesFull - minutes) * 60.0
+        return String.format(Locale.US, "%d°%02d'%05.2f\"%c", degrees, minutes, seconds, hemisphereChar)
     }
 
     private fun meridionalArc(latitudeRad: Double): Double = semiMajorAxis * (

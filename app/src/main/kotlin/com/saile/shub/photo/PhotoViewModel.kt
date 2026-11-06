@@ -53,22 +53,39 @@ data class PhotoUiState(
 
 class PhotoViewModel(application: Application) : AndroidViewModel(application) {
     private val dbHelper = PhotoPreferencesDbHelper(application)
-    private val mutableState = MutableStateFlow(dbHelper.getPreferences())
+    private val mutableState = MutableStateFlow(PhotoUiState())
     val state = mutableState.asStateFlow()
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { dbHelper.getPreferences() }
+                .onSuccess { saved ->
+                    mutableState.update { current ->
+                        saved.copy(status = current.status)
+                    }
+                }
+        }
+    }
 
     private fun updateState(updater: (PhotoUiState) -> PhotoUiState) {
         mutableState.update(updater)
     }
 
     fun savePreferences() {
+        val snapshot = mutableState.value
         viewModelScope.launch(Dispatchers.IO) {
-            dbHelper.savePreferences(mutableState.value)
+            runCatching { dbHelper.savePreferences(snapshot) }
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        runCatching { dbHelper.close() }
     }
 
     fun selectColor(color: OverlayColor) = updateState { it.copy(overlayColor = color) }
     fun setStatus(message: String?) = mutableState.update { it.copy(status = message) }
-    
+
     fun toggleUtm(show: Boolean) = updateState { it.copy(showUtm = show) }
     fun toggleGeo(show: Boolean) = updateState { it.copy(showGeo = show) }
     fun toggleDateTime(show: Boolean) = updateState { it.copy(showDateTime = show) }
@@ -81,8 +98,8 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
     fun setUserName(name: String) = updateState { it.copy(userName = name) }
     fun setPosition(pos: OverlayPosition) = updateState { it.copy(position = pos) }
     fun toggleLens() = updateState { it.copy(lensFacingBack = !it.lensFacingBack) }
-    fun cycleFlash() = updateState { 
-        val nextFlash = when(it.flashMode) {
+    fun cycleFlash() = updateState {
+        val nextFlash = when (it.flashMode) {
             CameraFlashMode.AUTO -> CameraFlashMode.ON
             CameraFlashMode.ON -> CameraFlashMode.OFF
             CameraFlashMode.OFF -> CameraFlashMode.AUTO

@@ -29,7 +29,7 @@ class TestSlippyMapMath(unittest.TestCase):
         """No zoom 0, o mundo inteiro é exatamente um único tile (0, 0, 0)."""
         x, y = lonlat_to_tile(0.0, 0.0, 0)
         self.assertEqual((x, y), (0, 0))
-        
+
         # Teste nos quatro cantos do mundo
         self.assertEqual(lonlat_to_tile(-179.9, 85.0, 0), (0, 0))
         self.assertEqual(lonlat_to_tile(179.9, -85.0, 0), (0, 0))
@@ -50,7 +50,7 @@ class TestSlippyMapMath(unittest.TestCase):
         """Garante que latitudes polares fora de ±85.051129° são tratadas sem lançar exceções."""
         self.assertAlmostEqual(clamp_latitude(90.0), MAX_LATITUDE)
         self.assertAlmostEqual(clamp_latitude(-90.0), MIN_LATITUDE)
-        
+
         x_pole, y_pole = lonlat_to_tile(0.0, 89.9, 5)
         self.assertEqual(y_pole, 0)
 
@@ -68,7 +68,7 @@ class TestSlippyMapMath(unittest.TestCase):
         min_lon, min_lat, max_lon, max_lat = tile_bounds_lonlat(10, 333, 542)
         self.assertTrue(min_lon < max_lon)
         self.assertTrue(min_lat < max_lat)
-        
+
         poly = tile_polygon_lonlat(10, 333, 542)
         self.assertTrue(poly.is_valid)
         self.assertAlmostEqual(poly.area, (max_lon - min_lon) * (max_lat - min_lat), places=6)
@@ -81,14 +81,14 @@ class TestSlippyMapMath(unittest.TestCase):
         """
         # Linha diagonal cruzando Cacoal a Pimenta Bueno
         line = LineString([(-61.44, -11.43), (-61.30, -11.55), (-61.20, -11.67)])
-        
+
         # Bounding box conteria centenas de tiles; geometry_to_tiles deve retornar apenas os que tocam a linha
         env_tiles = list(envelope_to_tiles(*line.bounds, zoom=14))
         geom_tiles = geometry_to_tiles(line, zoom=14)
-        
+
         self.assertTrue(len(geom_tiles) > 0)
         self.assertTrue(len(geom_tiles) < len(env_tiles), "A filtragem geométrica deve ser mais estrita que o envelope retangular")
-        
+
         # Todo tile retornado deve interceptar a linha
         for z, x, y in geom_tiles:
             self.assertTrue(tile_polygon_lonlat(z, x, y).intersects(line))

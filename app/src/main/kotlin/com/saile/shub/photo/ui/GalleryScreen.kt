@@ -30,7 +30,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -635,7 +635,7 @@ fun GalleryScreen(
                         preparedVideoUri = null
                         initialPage = null
                     }) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
                     }
                     Row {
                         IconButton(onClick = { showMetadataFor = currentItem }) {
@@ -674,7 +674,7 @@ fun GalleryScreen(
                                 onClose()
                             }
                         }) {
-                            Icon(Icons.Filled.ArrowBack, contentDescription = "Voltar")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
                         }
                     },
                     actions = {
