@@ -407,31 +407,31 @@ object GisMbtilesHelper {
     }
 
     /**
-     * Scans device directories for .mbtiles files, prioritizing internal imported files first.
+     * Scans app-scoped directories for .mbtiles files, prioritizing internal imported files first.
      */
     fun scanAvailableMbtiles(context: Context): List<MbtilesMetadata> {
         val internalDir = File(context.filesDir, "mbtiles")
-        val searchDirs = listOf(
+        val extRoot = context.getExternalFilesDir(null)
+        val searchDirs = listOfNotNull(
             internalDir,
-            context.getExternalFilesDir(null),
-            context.getExternalFilesDir("mbtiles"),
-            File("/sdcard/Download"),
-            File("/sdcard/Documents"),
-            File("/sdcard/s_hub"),
-            File("/sdcard/s_hub/maps")
+            extRoot,
+            extRoot?.let { File(it, "mbtiles") },
+            context.getExternalFilesDir("mbtiles")
         )
 
         val results = mutableListOf<MbtilesMetadata>()
         val seenPaths = mutableSetOf<String>()
 
         for (dir in searchDirs) {
-            if (dir == null || !dir.exists() || !dir.isDirectory) continue
-            val files = dir.listFiles { f -> f.extension.equals("mbtiles", ignoreCase = true) } ?: continue
-            for (f in files) {
-                if (f.isFile && f.canRead() && seenPaths.add(f.absolutePath)) {
-                    val meta = readMetadata(f)
-                    if (meta != null) {
-                        results.add(meta)
+            runCatching {
+                if (!dir.exists() || !dir.isDirectory) return@runCatching
+                val files = dir.listFiles { f -> f.extension.equals("mbtiles", ignoreCase = true) } ?: return@runCatching
+                for (f in files) {
+                    if (f.isFile && f.canRead() && seenPaths.add(f.absolutePath)) {
+                        val meta = readMetadata(f)
+                        if (meta != null) {
+                            results.add(meta)
+                        }
                     }
                 }
             }

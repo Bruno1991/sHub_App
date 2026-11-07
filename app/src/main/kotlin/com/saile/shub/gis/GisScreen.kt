@@ -172,7 +172,6 @@ fun GisScreen(
     var showProjectInfoDialog by remember { mutableStateOf(false) }
     var showActiveLayerSelector by remember { mutableStateOf(false) }
     var showBasemapDialog by remember { mutableStateOf(false) }
-    var showGeoConverterDialog by remember { mutableStateOf(false) }
     var showInspectionFormDialog by remember { mutableStateOf(false) }
     var showInspectionsListDialog by remember { mutableStateOf(false) }
     var selectedPhotoMetadata by remember { mutableStateOf<PhotoMediaMetadata?>(null) }
@@ -646,15 +645,6 @@ fun GisScreen(
                             }
                         )
                         NavigationDrawerItem(
-                            icon = { Icon(Icons.Filled.SwapHoriz, contentDescription = null) },
-                            label = { Text("Conversor Geodésico (UTM ⇄ GEO)") },
-                            selected = false,
-                            onClick = {
-                                coroutineScope.launch { drawerState.close() }
-                                showGeoConverterDialog = true
-                            }
-                        )
-                        NavigationDrawerItem(
                             icon = { Icon(Icons.Filled.FactCheck, contentDescription = null) },
                             label = { Text("Inspeções (${fieldInspections.size}) & Cache HD") },
                             selected = false,
@@ -730,11 +720,6 @@ fun GisScreen(
                             }
 
                             Spacer(modifier = Modifier.width(4.dp))
-
-                            // Integrated GeoConverter Quick Action
-                            IconButton(onClick = { showGeoConverterDialog = true }) {
-                                Icon(Icons.Filled.SwapHoriz, contentDescription = "Conversor UTM / GEO", tint = MaterialTheme.colorScheme.onSurface)
-                            }
 
                             // Unified Search Action
                             IconButton(onClick = { isSearchFocused = !isSearchFocused }) {
@@ -1013,10 +998,18 @@ fun GisScreen(
                     Surface(
                         shape = RoundedCornerShape(4.dp),
                         color = Color(0xCC000000),
-                        modifier = Modifier.clickable { showGeoConverterDialog = true }
+                        modifier = Modifier.clickable {
+                            val dmsStr = UtmConverter.formatDms(centerLat, centerLon)
+                            viewModel.focusCoordinateTarget(
+                                latitude = centerLat,
+                                longitude = centerLon,
+                                title = "Ponto na Mira (UTM $centerUtm)",
+                                subtitle = "GEO: %.6f, %.6f • GMS: $dmsStr".format(Locale.US, centerLat, centerLon)
+                            )
+                        }
                     ) {
                         Text(
-                            text = "UTM: $centerUtm",
+                            text = "UTM: $centerUtm  |  GEO: %.5f, %.5f".format(Locale.US, centerLat, centerLon),
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
@@ -1131,8 +1124,16 @@ fun GisScreen(
                                     val utmStr = remember(target.latitude, target.longitude) {
                                         UtmConverter.formatUtm(target.latitude, target.longitude)
                                     }
+                                    val dmsStr = remember(target.latitude, target.longitude) {
+                                        UtmConverter.formatDms(target.latitude, target.longitude)
+                                    }
                                     Text(
                                         text = "UTM: $utmStr  |  GEO: %.6f, %.6f".format(Locale.US, target.latitude, target.longitude),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "GMS: $dmsStr",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -1304,8 +1305,8 @@ fun GisScreen(
                         val searchResult = (state as? GisState.SearchResults)?.result
                         if (searchResult != null) {
                             LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                                searchResult.coordinateMatch?.let { coord ->
-                                    item {
+                                if (searchResult.coordinateMatches.isNotEmpty()) {
+                                    items(searchResult.coordinateMatches) { coord ->
                                         ListItem(
                                             headlineContent = { Text(coord.title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) },
                                             supportingContent = { Text(coord.subtitle) },
@@ -1470,187 +1471,6 @@ fun GisScreen(
                 }
             }
         }
-    }
-
-    // Dialog: Integrated sGeoConversor (UTM ⇄ GEO + Localizar no sGis)
-    if (showGeoConverterDialog) {
-        var isGeoToUtm by remember { mutableStateOf(true) }
-        var latInput by remember { mutableStateOf(String.format(Locale.US, "%.6f", centerLat)) }
-        var lonInput by remember { mutableStateOf(String.format(Locale.US, "%.6f", centerLon)) }
-        val initialUtm = remember(centerLat, centerLon) {
-            runCatching { UtmConverter.geoToUtm(GeoCoordinate(centerLat, centerLon)) }.getOrNull()
-        }
-        var zoneInput by remember { mutableStateOf((initialUtm?.zone ?: 20).toString()) }
-        var isSouth by remember { mutableStateOf(initialUtm?.hemisphere != Hemisphere.NORTH) }
-        var eastingInput by remember { mutableStateOf(initialUtm?.let { String.format(Locale.US, "%.2f", it.easting) } ?: "569402.00") }
-        var northingInput by remember { mutableStateOf(initialUtm?.let { String.format(Locale.US, "%.2f", it.northing) } ?: "8767709.00") }
-        var targetZoneInput by remember { mutableStateOf("") }
-        var errorMsg by remember { mutableStateOf<String?>(null) }
-        var resultGeo by remember { mutableStateOf<GeoCoordinate?>(GeoCoordinate(centerLat, centerLon)) }
-        var resultUtm by remember { mutableStateOf<UtmCoordinate?>(initialUtm) }
-
-        fun runConversion() {
-            runCatching {
-                val forcedZone = targetZoneInput.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
-                if (isGeoToUtm) {
-                    val lat = latInput.trim().replace(',', '.').toDouble()
-                    val lon = lonInput.trim().replace(',', '.').toDouble()
-                    val geo = GeoCoordinate(lat, lon)
-                    val utm = UtmConverter.geoToUtm(geo, forcedZone = forcedZone)
-                    resultGeo = geo
-                    resultUtm = utm
-                } else {
-                    val z = zoneInput.trim().toInt()
-                    val e = eastingInput.trim().replace(',', '.').toDouble()
-                    val n = northingInput.trim().replace(',', '.').toDouble()
-                    val srcUtm = UtmCoordinate(z, if (isSouth) Hemisphere.SOUTH else Hemisphere.NORTH, e, n)
-                    val geo = UtmConverter.utmToGeo(srcUtm)
-                    val finalUtm = if (forcedZone != null) UtmConverter.convertUtmZone(srcUtm, forcedZone) else srcUtm
-                    resultGeo = geo
-                    resultUtm = finalUtm
-                }
-                errorMsg = null
-            }.onFailure {
-                errorMsg = it.message ?: "Coordenadas inválidas."
-            }
-        }
-
-        AlertDialog(
-            onDismissRequest = { showGeoConverterDialog = false },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.SwapHoriz, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Conversor Geodésico (UTM ⇄ GEO)")
-                }
-            },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = isGeoToUtm,
-                            onClick = { isGeoToUtm = true; errorMsg = null },
-                            label = { Text("GEO → UTM") }
-                        )
-                        FilterChip(
-                            selected = !isGeoToUtm,
-                            onClick = { isGeoToUtm = false; errorMsg = null },
-                            label = { Text("UTM → GEO") }
-                        )
-                    }
-
-                    if (isGeoToUtm) {
-                        OutlinedTextField(
-                            value = latInput,
-                            onValueChange = { latInput = it },
-                            label = { Text("Latitude decimal") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = lonInput,
-                            onValueChange = { lonInput = it },
-                            label = { Text("Longitude decimal") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    } else {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedTextField(
-                                value = zoneInput,
-                                onValueChange = { zoneInput = it },
-                                label = { Text("Zona UTM") },
-                                singleLine = true,
-                                modifier = Modifier.weight(1f)
-                            )
-                            FilterChip(selected = isSouth, onClick = { isSouth = true }, label = { Text("Sul (S)") })
-                            FilterChip(selected = !isSouth, onClick = { isSouth = false }, label = { Text("Norte (N)") })
-                        }
-                        OutlinedTextField(
-                            value = eastingInput,
-                            onValueChange = { eastingInput = it },
-                            label = { Text("X / Easting (m)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = northingInput,
-                            onValueChange = { northingInput = it },
-                            label = { Text("Y / Northing (m)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-
-                    OutlinedTextField(
-                        value = targetZoneInput,
-                        onValueChange = { targetZoneInput = it },
-                        label = { Text("Reprojetar p/ Fuso UTM (opcional: 20 ou 21)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Button(onClick = ::runConversion, modifier = Modifier.fillMaxWidth()) {
-                        Text("Converter Coordenada")
-                    }
-
-                    errorMsg?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-
-                    val g = resultGeo
-                    val u = resultUtm
-                    if (g != null && u != null) {
-                        val band = UtmConverter.getUtmBand(g.latitude)
-                        val geoText = String.format(Locale.US, "%.6f, %.6f", g.latitude, g.longitude)
-                        val dmsText = UtmConverter.formatDms(g.latitude, g.longitude)
-                        val utmText = String.format(Locale.US, "%d%c %.2f E, %.2f N", u.zone, band, u.easting, u.northing)
-
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("GEO: $geoText", fontWeight = FontWeight.Bold)
-                                Text("DMS: $dmsText", style = MaterialTheme.typography.bodySmall)
-                                Text("UTM: $utmText", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
-                                    OutlinedButton(
-                                        onClick = { GisNavigationHelper.copyCoordinatesToClipboard(context, g.latitude, g.longitude, utmText) },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text("Copiar", style = MaterialTheme.typography.labelSmall)
-                                    }
-                                    Button(
-                                        onClick = {
-                                            viewModel.focusCoordinateTarget(
-                                                latitude = g.latitude,
-                                                longitude = g.longitude,
-                                                title = "UTM $utmText",
-                                                subtitle = "GEO: $geoText • DMS: $dmsText"
-                                            )
-                                            showGeoConverterDialog = false
-                                        },
-                                        modifier = Modifier.weight(1.3f)
-                                    ) {
-                                        Icon(Icons.Filled.Place, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Localizar no sGis", style = MaterialTheme.typography.labelSmall)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showGeoConverterDialog = false }) { Text("Fechar") }
-            }
-        )
     }
 
     // Dialog: Register Field Inspection / Anomaly

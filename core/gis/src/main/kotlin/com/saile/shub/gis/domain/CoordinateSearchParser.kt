@@ -10,9 +10,10 @@ import java.util.Locale
  * CoordinateSearchParser.kt
  *
  * Responsabilidade Única:
- * Reconhecer e converter entradas de busca em coordenadas Geográficas Decimais,
- * DMS (Graus, Minutos e Segundos) ou UTM (qualquer fuso/hemisfério), integrando
- * as capacidades geodésicas do sGeoConversor diretamente na busca do sGis.
+ * Reconhecer e converter nativamente no sGis entradas de busca em coordenadas
+ * Geográficas Decimais, GMS/DMS (Graus, Minutos e Segundos) ou UTM (com fuso explícito
+ * ou em ambos os fusos de Rondônia 20S/21S), exibindo instantaneamente a conversão
+ * completa entre sistemas geodésicos.
  */
 data class ParsedCoordinate(
     val latitude: Double,
@@ -25,45 +26,52 @@ data class ParsedCoordinate(
 object CoordinateSearchParser {
 
     /**
-     * Attempts to parse input string as UTM, Geographic Decimal, or DMS coordinates.
-     * Returns ParsedCoordinate if recognized, or null otherwise.
+     * Returns the primary parsed coordinate match (or null if input is not a coordinate).
      */
     fun parse(input: String): ParsedCoordinate? {
-        val trimmed = input.trim()
-        if (trimmed.length < 3) return null
+        return parseAll(input).firstOrNull()
+    }
 
-        // 1. Try parsing UTM format
-        val utm = parseUtm(trimmed)
-        if (utm != null) return utm
+    /**
+     * Parses input string as UTM (with explicit zone or returning both 20S and 21S options when zone is omitted),
+     * Geographic Decimal, or GMS/DMS coordinates.
+     */
+    fun parseAll(input: String): List<ParsedCoordinate> {
+        val trimmed = input.trim()
+        if (trimmed.length < 3) return emptyList()
+
+        // 1. Try parsing UTM format (returns 1 match if zone specified, or 20S + 21S if zone omitted)
+        val utmList = parseUtmAll(trimmed)
+        if (utmList.isNotEmpty()) return utmList
 
         // 2. Try parsing Geographic Decimal (Lat, Lon)
         val geo = parseGeographicDecimal(trimmed)
-        if (geo != null) return geo
+        if (geo != null) return listOf(geo)
 
         // 3. Try parsing Geographic DMS (e.g. 11°26'02.4"S 61°26'49.2"W)
         val dms = parseGeographicDms(trimmed)
-        if (dms != null) return dms
+        if (dms != null) return listOf(dms)
 
-        return null
+        return emptyList()
     }
 
-    private fun parseUtm(input: String): ParsedCoordinate? {
-        // Pattern 1: Zone + Hemisphere + Easting + Northing (e.g., "20S 569402 8767709" or "20L 569402.6 8767709.64")
+    private fun parseUtmAll(input: String): List<ParsedCoordinate> {
+        // Pattern 1: Zone + Hemisphere/Band + Easting + Northing (e.g., "20S 569402 8767709" or "21L 215400 8590100")
         val withZoneRegex = Regex(
-            """^(?:utm\s*)?(\d{1,2})\s*([C-XNSns])\s*[:=]?\s*(\d{5,7}(?:[.,]\d+)?)\s*[,;\s]\s*(\d{6,8}(?:[.,]\d+)?)$""",
+            """^(?:utm\s*)?(\d{1,2})\s*([C-XNSns])\s*[:=]?\s*(\d{5,7}(?:[.,]\d+)?)\s*[,;\s/]+\s*(\d{6,8}(?:[.,]\d+)?)$""",
             RegexOption.IGNORE_CASE
         )
         val matchWithZone = withZoneRegex.find(input)
         if (matchWithZone != null) {
             val zone = matchWithZone.groupValues[1].toIntOrNull() ?: 20
             val bandOrHemi = matchWithZone.groupValues[2].uppercase()
-            val hemisphere = if (bandOrHemi in listOf("N", "P", "Q", "R", "S", "T", "U", "V", "W", "X") && bandOrHemi == "N") {
+            val hemisphere = if (bandOrHemi == "N") {
                 Hemisphere.NORTH
             } else {
                 Hemisphere.SOUTH
             }
-            val easting = matchWithZone.groupValues[3].replace(',', '.').toDoubleOrNull() ?: return null
-            val northing = matchWithZone.groupValues[4].replace(',', '.').toDoubleOrNull() ?: return null
+            val easting = matchWithZone.groupValues[3].replace(',', '.').toDoubleOrNull() ?: return emptyList()
+            val northing = matchWithZone.groupValues[4].replace(',', '.').toDoubleOrNull() ?: return emptyList()
 
             if (easting in 100_000.0..1_000_000.0 && northing in 0.0..10_000_000.0) {
                 val geo = runCatching {
@@ -75,21 +83,21 @@ object CoordinateSearchParser {
                     val title = "Coordenada UTM: $zone$band %.0f %.0f".format(Locale.US, easting, northing)
                     val dmsStr = UtmConverter.formatDms(geo.latitude, geo.longitude)
                     val desc = "GEO: %.6f, %.6f • $dmsStr".format(Locale.US, geo.latitude, geo.longitude)
-                    return ParsedCoordinate(geo.latitude, geo.longitude, title, desc, isUtm = true)
+                    return listOf(ParsedCoordinate(geo.latitude, geo.longitude, title, desc, isUtm = true))
                 }
             }
         }
 
-        // Pattern 2: Two numbers without zone, where Easting is 100k..999k and Northing is 1M..10M
-        // (Defaults to Zone 20S - Standard grid for Rondonia and Western Amazon)
+        // Pattern 2: Two numbers without zone (Easting 100k..999k, Northing 1M..10M)
+        // Generates Zone 20S (primary for Rondônia) AND Zone 21S (Cone Sul / Vilhena) so the operator can pick either
         val rawNumbersRegex = Regex(
-            """^(?:x\s*[:=]\s*)?(\d{5,7}(?:[.,]\d+)?)\s*[,;\s]\s*(?:y\s*[:=]\s*)?(\d{6,8}(?:[.,]\d+)?)$""",
+            """^(?:[ex]\s*[:=]?\s*)?(\d{5,7}(?:[.,]\d+)?)\s*[,;\s/]+\s*(?:[ny]\s*[:=]?\s*)?(\d{6,8}(?:[.,]\d+)?)$""",
             RegexOption.IGNORE_CASE
         )
         val matchRaw = rawNumbersRegex.find(input)
         if (matchRaw != null) {
-            val num1 = matchRaw.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return null
-            val num2 = matchRaw.groupValues[2].replace(',', '.').toDoubleOrNull() ?: return null
+            val num1 = matchRaw.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return emptyList()
+            val num2 = matchRaw.groupValues[2].replace(',', '.').toDoubleOrNull() ?: return emptyList()
 
             val easting: Double
             val northing: Double
@@ -100,27 +108,31 @@ object CoordinateSearchParser {
                 easting = num2
                 northing = num1
             } else {
-                return null
+                return emptyList()
             }
 
-            val geo = runCatching {
-                UtmConverter.utmToGeo(UtmCoordinate(20, Hemisphere.SOUTH, easting, northing))
-            }.getOrNull()
-
-            if (geo != null) {
-                val band = UtmConverter.getUtmBand(geo.latitude)
-                val title = "Coordenada UTM: 20$band %.0f %.0f".format(Locale.US, easting, northing)
-                val desc = "Localização Geográfica: %.6f, %.6f".format(Locale.US, geo.latitude, geo.longitude)
-                return ParsedCoordinate(geo.latitude, geo.longitude, title, desc, isUtm = true)
+            val results = mutableListOf<ParsedCoordinate>()
+            for (zone in listOf(20, 21)) {
+                val geo = runCatching {
+                    UtmConverter.utmToGeo(UtmCoordinate(zone, Hemisphere.SOUTH, easting, northing))
+                }.getOrNull()
+                if (geo != null) {
+                    val band = UtmConverter.getUtmBand(geo.latitude)
+                    val title = "Coordenada UTM: $zone$band %.0f %.0f".format(Locale.US, easting, northing)
+                    val dmsStr = UtmConverter.formatDms(geo.latitude, geo.longitude)
+                    val desc = "GEO: %.6f, %.6f • $dmsStr".format(Locale.US, geo.latitude, geo.longitude)
+                    results.add(ParsedCoordinate(geo.latitude, geo.longitude, title, desc, isUtm = true))
+                }
             }
+            return results
         }
 
-        return null
+        return emptyList()
     }
 
     private fun parseGeographicDecimal(input: String): ParsedCoordinate? {
         val regex = Regex(
-            """^([+-]?\d{1,2}(?:[.,]\d+)?)\s*([NSns])?\s*[,;\s]\s*([+-]?\d{1,3}(?:[.,]\d+)?)\s*([EOWLeowl])?$"""
+            """^([+-]?\d{1,2}(?:[.,]\d+)?)\s*([NSns])?\s*[,;\s/]+\s*([+-]?\d{1,3}(?:[.,]\d+)?)\s*([EOWLeowl])?$"""
         )
         val match = regex.find(input) ?: return null
 
@@ -135,10 +147,12 @@ object CoordinateSearchParser {
         if (lat in -90.0..90.0 && lon in -180.0..180.0) {
             val title = "Coordenada Geográfica: %.6f, %.6f".format(Locale.US, lat, lon)
             val utm = runCatching { UtmConverter.geoToUtm(GeoCoordinate(lat, lon)) }.getOrNull()
+            val dmsStr = UtmConverter.formatDms(lat, lon)
             val desc = if (utm != null) {
-                "UTM: ${utm.zone}S %.0fm E, %.0fm N".format(Locale.US, utm.easting, utm.northing)
+                val band = UtmConverter.getUtmBand(lat)
+                "UTM: ${utm.zone}$band %.0fm E, %.0fm N • $dmsStr".format(Locale.US, utm.easting, utm.northing)
             } else {
-                "Latitude: %.6f | Longitude: %.6f".format(Locale.US, lat, lon)
+                "GMS: $dmsStr"
             }
             return ParsedCoordinate(lat, lon, title, desc, isUtm = false)
         }
@@ -148,7 +162,7 @@ object CoordinateSearchParser {
 
     private fun parseGeographicDms(input: String): ParsedCoordinate? {
         val dmsRegex = Regex(
-            """^\s*(\d{1,2})\s*[°ºd:\s]\s*(\d{1,2})\s*['’m:\s]\s*(\d{1,2}(?:[.,]\d+)?)\s*["”s]?\s*([NSns])\s*[,;\s]+\s*(\d{1,3})\s*[°ºd:\s]\s*(\d{1,2})\s*['’m:\s]\s*(\d{1,2}(?:[.,]\d+)?)\s*["”s]?\s*([EOWLeowl])\s*$"""
+            """^\s*(\d{1,2})\s*[°ºd:\s]\s*(\d{1,2})\s*['’m:\s]\s*(\d{1,2}(?:[.,]\d+)?)\s*["”s]?\s*([NSns])\s*[,;\s/]+\s*(\d{1,3})\s*[°ºd:\s]\s*(\d{1,2})\s*['’m:\s]\s*(\d{1,2}(?:[.,]\d+)?)\s*["”s]?\s*([EOWLeowl])\s*$"""
         )
         val match = dmsRegex.find(input) ?: return null
 
@@ -169,10 +183,11 @@ object CoordinateSearchParser {
         if (lonHemi == "W" || lonHemi == "O") lon = -lon
 
         if (lat in -90.0..90.0 && lon in -180.0..180.0) {
-            val title = "Coordenada DMS: ${UtmConverter.formatDms(lat, lon)}"
+            val title = "Coordenada GMS: ${UtmConverter.formatDms(lat, lon)}"
             val utm = runCatching { UtmConverter.geoToUtm(GeoCoordinate(lat, lon)) }.getOrNull()
             val desc = if (utm != null) {
-                "GEO: %.6f, %.6f • UTM: ${utm.zone}S %.0f %.0f".format(Locale.US, lat, lon, utm.easting, utm.northing)
+                val band = UtmConverter.getUtmBand(lat)
+                "GEO: %.6f, %.6f • UTM: ${utm.zone}$band %.0f %.0f".format(Locale.US, lat, lon, utm.easting, utm.northing)
             } else {
                 "GEO: %.6f, %.6f".format(Locale.US, lat, lon)
             }

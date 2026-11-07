@@ -183,14 +183,19 @@ object GisClientsHelper {
             }
         }
 
-        context.contentResolver.openInputStream(uri)?.use { rawStream ->
-            importClientsFromStream(
-                context = context,
-                inputStream = rawStream,
-                sourceFileName = displayName,
-                sourceSizeBytes = sourceSize,
-                onProgress = onProgress
-            )
+        try {
+            context.contentResolver.openInputStream(uri)?.use { rawStream ->
+                importClientsFromStream(
+                    context = context,
+                    inputStream = rawStream,
+                    sourceFileName = displayName,
+                    sourceSizeBytes = sourceSize,
+                    onProgress = onProgress
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to open clients URI: $uri", e)
+            null
         }
     }
 
@@ -199,15 +204,20 @@ object GisClientsHelper {
         jsonFile: File,
         onProgress: (Int) -> Unit = {}
     ): ClientsPackageMetadata? = withContext(Dispatchers.IO) {
-        if (!jsonFile.exists()) return@withContext null
-        FileInputStream(jsonFile).use { fis ->
-            importClientsFromStream(
-                context = context,
-                inputStream = fis,
-                sourceFileName = jsonFile.name,
-                sourceSizeBytes = jsonFile.length(),
-                onProgress = onProgress
-            )
+        if (!jsonFile.exists() || !jsonFile.canRead()) return@withContext null
+        try {
+            FileInputStream(jsonFile).use { fis ->
+                importClientsFromStream(
+                    context = context,
+                    inputStream = fis,
+                    sourceFileName = jsonFile.name,
+                    sourceSizeBytes = jsonFile.length(),
+                    onProgress = onProgress
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read clients file: ${jsonFile.absolutePath}", e)
+            null
         }
     }
 

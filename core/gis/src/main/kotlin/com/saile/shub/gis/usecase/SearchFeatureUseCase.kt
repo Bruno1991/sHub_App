@@ -43,7 +43,8 @@ data class GisSearchResult(
     val query: String,
     val coordinateMatch: SearchItem.CoordinateItem?,
     val features: List<SearchItem.FeatureItem>,
-    val clients: List<SearchItem.ClientItem> = emptyList()
+    val clients: List<SearchItem.ClientItem> = emptyList(),
+    val coordinateMatches: List<SearchItem.CoordinateItem> = listOfNotNull(coordinateMatch)
 )
 
 class SearchFeatureUseCase(private val gisDao: GisDao) {
@@ -71,8 +72,8 @@ class SearchFeatureUseCase(private val gisDao: GisDao) {
         }
 
         // 1. Check for coordinate pattern (Geographic Lat/Lon, DMS, or UTM Zone 20S/21S/etc.)
-        val coord = CoordinateSearchParser.parse(trimmed)
-        val coordItem = coord?.let {
+        val coords = CoordinateSearchParser.parseAll(trimmed)
+        val coordItems = coords.map {
             SearchItem.CoordinateItem(
                 latitude = it.latitude,
                 longitude = it.longitude,
@@ -81,6 +82,8 @@ class SearchFeatureUseCase(private val gisDao: GisDao) {
                 isUtm = it.isUtm
             )
         }
+        val coordItem = coordItems.firstOrNull()
+        val coord = coords.firstOrNull()
 
         val activePackage = runCatching { gisDao.getActivePackage() }.getOrNull()
         val path = gpkgPath ?: activePackage?.fileUri
@@ -154,7 +157,8 @@ class SearchFeatureUseCase(private val gisDao: GisDao) {
             query = query,
             coordinateMatch = coordItem,
             features = featuresList,
-            clients = clientsList
+            clients = clientsList,
+            coordinateMatches = coordItems
         )
     }
 

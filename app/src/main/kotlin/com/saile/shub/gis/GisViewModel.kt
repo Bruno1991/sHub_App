@@ -215,10 +215,10 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            loadActiveDataset(autoZoom = true)
-            refreshAvailableMbtiles()
-            refreshClientsMetadata()
-            refreshPhotosAndInspections()
+            runCatching { loadActiveDataset(autoZoom = true) }.onFailure { Log.e("GisViewModel", "Error loading active dataset", it) }
+            runCatching { refreshAvailableMbtiles() }.onFailure { Log.e("GisViewModel", "Error refreshing MBTiles", it) }
+            runCatching { refreshClientsMetadata() }.onFailure { Log.e("GisViewModel", "Error refreshing clients metadata", it) }
+            runCatching { refreshPhotosAndInspections() }.onFailure { Log.e("GisViewModel", "Error refreshing photos/inspections", it) }
         }
     }
 
@@ -230,28 +230,30 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshPhotosAndInspections() {
         viewModelScope.launch(Dispatchers.IO) {
-            _geotaggedPhotos.value = photoDbHelper.getAllGeotaggedPhotos()
-            _fieldInspections.value = inspectionHelper.getAllInspections()
+            runCatching {
+                _geotaggedPhotos.value = photoDbHelper.getAllGeotaggedPhotos()
+                _fieldInspections.value = inspectionHelper.getAllInspections()
+            }.onFailure {
+                Log.e("GisViewModel", "Failed to refresh photos and inspections", it)
+            }
         }
     }
 
     fun refreshClientsMetadata() {
         viewModelScope.launch(Dispatchers.IO) {
             val ctx = getApplication<Application>()
-            var meta = GisClientsHelper.readActiveMetadata(ctx)
+            var meta = runCatching { GisClientsHelper.readActiveMetadata(ctx) }.getOrNull()
             if (meta == null) {
-                // Check if dashboard_rota.json is in /sdcard/Download or externalFilesDir
-                val candidates = listOfNotNull(
-                    ctx.getExternalFilesDir(null)?.let { File(it, "clients/dashboard_rota.json") },
-                    File("/sdcard/Download/dashboard_rota.json")
-                )
-                val foundJson = candidates.firstOrNull { it.exists() && it.length() > 1024L }
-                if (foundJson != null) {
+                // Only check app-scoped externalFilesDir (never /sdcard/Download without SAF permission)
+                val sandboxJson = ctx.getExternalFilesDir(null)?.let { File(it, "clients/dashboard_rota.json") }
+                if (sandboxJson != null && sandboxJson.exists() && sandboxJson.canRead() && sandboxJson.length() > 1024L) {
                     _isImportingClients.value = true
                     _clientsImportCount.value = 0
-                    meta = GisClientsHelper.importClientsFromFile(ctx, foundJson) { count ->
-                        _clientsImportCount.value = count
-                    }
+                    meta = runCatching {
+                        GisClientsHelper.importClientsFromFile(ctx, sandboxJson) { count ->
+                            _clientsImportCount.value = count
+                        }
+                    }.getOrNull()
                     _isImportingClients.value = false
                 }
             }
