@@ -20,12 +20,10 @@ class CoreLocationUtilsTest {
     }
 
     @Test
-    fun `HubToolRegistry registers all core field modules`() {
+    fun `HubToolRegistry registers active field modules sFoto and sGIS`() {
         val destinations = HubToolRegistry.tools.map { it.destination }
-        assertTrue(destinations.contains(Destination.CONVERTER))
         assertTrue(destinations.contains(Destination.PHOTO))
         assertTrue(destinations.contains(Destination.GIS))
-        assertEquals(3, HubToolRegistry.tools.size)
+        assertEquals(2, HubToolRegistry.tools.size)
     }
 }
-

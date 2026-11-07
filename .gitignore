@@ -23,7 +23,7 @@ local.properties
 *.iws
 captures/
 
-# APK / Large binaries
+# APK / Large binaries & Offline Databases
 *.apk
 *.aab
 *.jks
@@ -31,6 +31,9 @@ captures/
 *.mp4
 *.gpkg
 *.mbtiles
+*.db
+dashboard_rota.html
+dashboard_rota.json
 
 # Logs, Python cache & temp
 *.log

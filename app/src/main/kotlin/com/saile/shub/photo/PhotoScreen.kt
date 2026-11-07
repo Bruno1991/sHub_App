@@ -35,10 +35,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.platform.LocalView
 import coil.ImageLoader
 import coil.decode.VideoFrameDecoder
+import com.saile.shub.core.location.CoreLocationUtils
+import com.saile.shub.core.location.CoreNetworkUtils
 import com.saile.shub.photo.camera.CameraPreview
 import com.saile.shub.photo.camera.MediaUtils
 import com.saile.shub.photo.camera.cameraOutputRotation
-import com.saile.shub.photo.location.LocationUtils
 import com.saile.shub.photo.ui.PhotoBottomBar
 import com.saile.shub.photo.ui.IconStatusPopup
 import com.saile.shub.photo.ui.PhotoSettingsDrawer
@@ -117,7 +118,7 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
     }
     var resolvedAddress by remember { mutableStateOf<String?>(null) }
     
-    var location by remember { mutableStateOf(LocationUtils.lastKnownLocation(context)) }
+    var location by remember { mutableStateOf(CoreLocationUtils.lastKnownLocation(context)) }
     val liveSensorState = remember { LiveOverlaySensorState() }
     var isVideoMode by remember { mutableStateOf(false) }
     var recordingUiState by remember { mutableStateOf(VideoRecordingUiState.IDLE) }
@@ -278,7 +279,7 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
 
     fun updateAddress(loc: android.location.Location?) {
         if (loc == null) return
-        if (!com.saile.shub.photo.location.NetworkUtils.isNetworkAvailable(context)) {
+        if (!CoreNetworkUtils.isNetworkAvailable(context)) {
             resolvedAddress = null
             return
         }
@@ -290,7 +291,7 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
                 val addr = addresses?.firstOrNull()
                 val newAddress = addr?.let { 
                     val city = it.locality ?: it.subAdminArea
-                    val uf = LocationUtils.getStateAcronym(it.adminArea)
+                    val uf = CoreLocationUtils.getStateAcronym(it.adminArea)
                     val cityUf = listOfNotNull(city, uf).joinToString("-")
                     listOfNotNull(it.thoroughfare, it.subLocality, cityUf.takeIf { c -> c.isNotEmpty() }).joinToString(" - ") 
                 }
@@ -404,7 +405,7 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
     DisposableEffect(hasLocationPermission) {
         val manager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
         val listener = android.location.LocationListener { loc -> 
-            if (LocationUtils.isBetterLocation(loc, location)) {
+            if (CoreLocationUtils.isBetterLocation(loc, location)) {
                 location = loc
                 updateAddress(loc)
             }
@@ -426,7 +427,7 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
 
     LaunchedEffect(hasLocationPermission) {
         if (hasLocationPermission && location == null) {
-            location = LocationUtils.lastKnownLocation(context)
+            location = CoreLocationUtils.lastKnownLocation(context)
         }
     }
 
@@ -443,7 +444,7 @@ fun PhotoScreen(onBack: () -> Unit, viewModel: PhotoViewModel = viewModel()) {
             resolvedAddress = "Sem permissão"
             return
         }
-        if (!com.saile.shub.photo.location.NetworkUtils.isNetworkAvailable(context)) {
+        if (!CoreNetworkUtils.isNetworkAvailable(context)) {
             Toast.makeText(context, "Sem conexão com a internet. Endereço ficará oculto.", Toast.LENGTH_SHORT).show()
             resolvedAddress = null
         } else {

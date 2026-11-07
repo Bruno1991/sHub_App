@@ -59,7 +59,7 @@ class SearchFeatureUseCaseTest {
             GisFeatureEntity(
                 id = 1,
                 packageId = 1,
-                sourceLayer = "BASE ERO – Transformador",
+                sourceLayer = "Transformador",
                 featureSourceId = "2456136",
                 codeRaw = "PTUP0024",
                 codeNorm = "ptup0024",
@@ -93,7 +93,7 @@ class SearchFeatureUseCaseTest {
             GisFeatureEntity(
                 id = 2,
                 packageId = 1,
-                sourceLayer = "BASE ERO – SUBESTAÇÃO",
+                sourceLayer = "SUBESTAÇÃO",
                 featureSourceId = "47308",
                 codeRaw = "SE GUAJARA MIRIM",
                 codeNorm = "seguajaramirim",

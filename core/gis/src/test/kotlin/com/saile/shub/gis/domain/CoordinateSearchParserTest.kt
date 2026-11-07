@@ -26,6 +26,14 @@ class CoordinateSearchParserTest {
     }
 
     @Test
+    fun testParseGeographicDms() {
+        val res = CoordinateSearchParser.parse("""11° 26' 02.4" S, 61° 26' 49.2" W""")
+        assertNotNull(res)
+        assertEquals(-11.434, res.latitude, 0.001)
+        assertEquals(-61.447, res.longitude, 0.001)
+    }
+
+    @Test
     fun testParseUtmWithZone() {
         val res = CoordinateSearchParser.parse("20S 569402 8767709")
         assertNotNull(res)
@@ -49,5 +57,10 @@ class CoordinateSearchParserTest {
         val res = CoordinateSearchParser.parse("PTUP0024")
         kotlin.test.assertNull(res)
     }
-}
 
+    @Test
+    fun testClientNormalization() {
+        assertEquals("w5201960384", GisClientsHelper.normalizeToken("W-520.196.0384"))
+        assertEquals("rosangela adelina", GisClientsHelper.normalizeName("ROSÂNGELA   ADELINA"))
+    }
+}

@@ -1,13 +1,20 @@
-# Documentação Técnica do Módulo — sGis
+# Documentação Técnica do Módulo — sGIS (QField Pro Edition)
 
-**Data:** 2026-11-06
-**Módulos:** `:core:gis`, `:app` (`com.saile.shub.gis`) e `tools/` (Pipeline Python Espacial)
+**Data:** 2026-11-07
+**Módulos:** `:core:gis`, `:core:geo`, `:app` (`com.saile.shub.gis`) e `tools/` (Pipeline Python Espacial)
 
 ---
 
 ## 1. Responsabilidade
 
-O **sGis** é o Sistema de Informações Geográficas (GIS) móvel 100% offline do **sHub**, projetado para inspeção de redes de distribuição e subtransmissão elétrica em Rondônia e na Amazônia. Combina renderização vetorial de alta velocidade sobre **GeoPackage (`.gpkg`)** com camadas raster de satélite em múltiplos níveis via **MBTiles (`.mbtiles`)**.
+O **sGIS** é o Sistema de Informações Geográficas (GIS) móvel 100% offline do **sHub**, projetado para inspeção de redes de distribuição e subtransmissão elétrica e atendimento comercial/técnico em Rondônia e na Amazônia. Integra:
+1. Renderização vetorial a **120 FPS (Offscreen Bitmap Layer Caching)** sobre **GeoPackage (`.gpkg`)** indexado por R-Tree;
+2. Importação e busca ultrarrápida de **Base de Clientes (`.json`)** indexada em SQLite (`gis_clients.db`) por **UC/CDC**, **Medidor** ou **Nome do Cliente**;
+3. **Conversor Geodésico Integrado (`UTM ⇄ GEO / DMS`)** com re-projeção entre zonas (`20S ⇄ 21S`) e localização direta no mapa em Zoom 18;
+4. Integração bidirecional **`sGIS ⇄ sFoto`** (botão *"Fotografar sFoto"* com carimbo automático do ativo/cliente + camada de fotos georreferenciadas no mapa);
+5. **Inspeção e Apontamento de Anomalias Offline** (`GisFieldInspectionHelper.kt`) com exportação e compartilhamento em **KML** e **CSV**;
+6. **Navegação Rural "Fora de Estrada"** com linha guia dinâmica (distância e azimute em tempo real) + gravação de **Rastro da Viatura (Tracklog GPS)**;
+7. Camada raster híbrida **MBTiles (`.mbtiles`)** multinível + **Sincronizador de Satélite Guiado pelo `.gpkg`** direto no aplicativo (`OfflinePackageManager.syncGpkgAreaTilesToMbtiles`).
 
 ---
 
@@ -17,21 +24,19 @@ O **sGis** é o Sistema de Informações Geográficas (GIS) móvel 100% offline 
 
 | Arquivo | Responsabilidade |
 |---|---|
-| `GpkgReader.kt` | Leitura imparcial de qualquer arquivo `.gpkg` importado, inspeção dinâmica de SRS (`gpkg_contents`), decodificação WKB (`POINT`, `LINESTRING`, `POLYGON`, `MULTILINESTRING`) e filtragem espacial instantânea via índice SQLite R-Tree (`rtree_<tabela>_<geom>`). |
-| `GisBasemapHelper.kt` | Configuração enxuta de camadas de mapa base restrita exclusivamente a `MBTiles Offline (.mbtiles)` (`OFFLINE_MBTILES`) e `Mapa de Ruas (OSM)` (`STREETS`). |
-| `GisMbtilesHelper.kt` | `RobustMbtilesArchive`: leitor SQLite `.mbtiles` imparcial com detecção do esquema (`tms` vs `xyz`) via tabela `metadata`, evitando falsos positivos de hemisfério oposto em *cache misses*. |
-| `CompositeMbtilesArchive.kt` | Composição hierárquica de múltiplos arquivos `.mbtiles` priorizando o arquivo selecionado pelo operador. |
-| `ControlledFallbackArchive.kt` | Síntese controlada de tiles por *overzoom* até `maxDownscaleLevels = 8` níveis acima do nível nativo, recortando matematicamente o sub-quadrante exato (`cropAndScaleQuadrant`) com filtragem bilinear e cache `LruCache` de tiles ancestrais. |
-| `GisNetworkMode.kt` | Política explícita de rede (`OFFLINE_ONLY` para `.mbtiles`, `HYBRID_CACHE` para `Mapa de Ruas (OSM)`). |
-| `PackageManifest.kt` & `OfflinePackageManager.kt` | Manifesto JSON puro (`manifest.json`), verificação de integridade SHA-256 e instalação atômica via diretório `.staging`. |
-| `GisLocationTracker.kt` | Rastreamento GNSS (priorizando GPS sobre Rede) + bússola com filtro passa-baixa e *deadband* de `2.0°`, desacoplado via `CoreLocationUtils`. |
-| `GisElectricalSymbology.kt` | Simbologia técnica para Postes, Transformadores, Chaves Seccionadoras/Fusíveis, Subestações e Vãos MT/BT. |
+| `GpkgReader.kt` | Leitura imparcial de qualquer arquivo `.gpkg` importado, inspeção dinâmica de SRS (`gpkg_contents`), decodificação WKB e filtragem espacial instantânea via índice SQLite R-Tree (`rtree_<tabela>_<geom>`). |
+| `GisClientsHelper.kt` | Importador streaming (`JsonReader`) de bases de clientes `.json` (175.000+ UCs com `< 5 MB` de RAM) para banco SQLite indexado (`gis_clients.db`), permitindo busca `< 1 ms` por UC/CDC, Medidor ou Nome e busca espacial de clientes próximos. |
+| `CoordinateSearchParser.kt` & `SearchFeatureUseCase.kt` | Busca unificada simultânea por ativos da rede (`.gpkg`), clientes/UCs/medidores (`.json`), coordenadas Geográficas (Decimais e GMS/DMS) e coordenadas UTM (com zona explícita ou padrão `20S`). |
+| `GisVectorOverlay.kt` | Renderizador vetorial com **Offscreen Bitmap Layer Cache (120 FPS)** para linhas (Vão MT/BT) e símbolos elétricos, além de marcadores interativos para **Fotos do `sFoto`**, **Anomalias de Campo**, **Rastro GPS (Tracklog)** e **Linha Guia Rural**. |
+| `GisFieldInspectionHelper.kt` | Persistência local e exportação em **KML** (Google Earth/QGIS) e **CSV** (Excel) de apontamentos e anomalias de campo via `FileProvider`. |
+| `GisNavigationHelper.kt` & `GisLocationTracker.kt` | Cálculo geodésico Haversine de distância e azimute magnético/verdadeiro para navegação rural fora de estrada (`RuralGuidanceInfo`), gravação de *tracklog* da viatura e lançamento de rotas externas (Google Maps / Waze). |
+| `OfflinePackageManager.kt` | Manifesto JSON (`manifest.json`), verificação SHA-256 e sincronizador embarcado (`syncGpkgAreaTilesToMbtiles`) que baixa em segundo plano apenas os tiles `lyrs=y&hl=pt-BR` necessários para cobrir os ativos do `.gpkg` ativo. |
+| `GisMbtilesHelper.kt`, `CompositeMbtilesArchive.kt` & `ControlledFallbackArchive.kt` | Pipeline de leitura `.mbtiles` imparcial (`tms`/`xyz`) com composição de múltiplos arquivos e *overzoom* matemático por recorte de sub-quadrante até Zoom 22. |
 
 ### 2.2 Ferramentas Python de Planejamento e Empacotamento (`tools/`)
 
 | Script | Responsabilidade |
 |---|---|
-| `tools/spatial_coverage_planner.py` | Inspeciona o GeoPackage da rede elétrica, reprojeta cada ativo para a zona UTM métrica correta (**UTM 20S `EPSG:31980`** para `lon < -60°` ou **UTM 21S `EPSG:31981`** para `lon >= -60°`), aplica buffers configuráveis (Postes 100 m, Trafos 150 m, Chaves 150 m, Vãos MT 200 m, Vãos BT 150 m, Subestações 400 m) e exporta a cobertura consolidada. |
-| `tools/slippy_map_math.py` | Matemática Slippy Map Web Mercator (`EPSG:3857`) e enumeração otimizada de tiles via índice espacial `STRtree` (`geometry_to_tiles`). |
-| `tools/mbtiles_pipeline.py` | Geração, validação e auditoria de arquivos `.mbtiles` (`PRAGMA integrity_check`) e criação de pacotes offline com manifesto SHA-256. |
-
+| `tools/build_google_hybrid_rondonia.py` | Construtor de alta velocidade para geração de pacotes `.mbtiles` Google Hybrid (`lyrs=y&hl=pt-BR`, Satélite + Rodovias + Nomes em Português) guiados pela cobertura dos ativos do `.gpkg` (Zooms 7–15 estadual + Zooms 16–17 sobre a rede elétrica). |
+| `tools/spatial_coverage_planner.py` | Reprojeta ativos para UTM métrico (**UTM 20S `EPSG:31980`** / **UTM 21S `EPSG:31981`**) e calcula buffers espaciais. |
+| `tools/mbtiles_pipeline.py` | Validação e auditoria de arquivos `.mbtiles` (`PRAGMA integrity_check`). |

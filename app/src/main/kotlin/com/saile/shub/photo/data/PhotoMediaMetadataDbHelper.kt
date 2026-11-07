@@ -220,6 +220,54 @@ class PhotoMediaMetadataDbHelper(context: Context) :
         }
     }
 
+    fun getAllGeotaggedPhotos(limit: Int = 200): List<PhotoMediaMetadata> {
+        val list = mutableListOf<PhotoMediaMetadata>()
+        runCatching {
+            readableDatabase.query(
+                TABLE_METADATA,
+                null,
+                "$COL_LATITUDE IS NOT NULL AND $COL_LONGITUDE IS NOT NULL",
+                null,
+                null,
+                null,
+                "$COL_CAPTURED_AT DESC",
+                limit.toString()
+            ).use { cursor ->
+                val latitudeIndex = cursor.getColumnIndexOrThrow(COL_LATITUDE)
+                val longitudeIndex = cursor.getColumnIndexOrThrow(COL_LONGITUDE)
+                val altitudeIndex = cursor.getColumnIndex(COL_ALTITUDE)
+                val accuracyIndex = cursor.getColumnIndex(COL_ACCURACY)
+                val azimuthIndex = cursor.getColumnIndex(COL_AZIMUTH)
+                val showAltIndex = cursor.getColumnIndex(COL_SHOW_ALTITUDE)
+                val showAzIndex = cursor.getColumnIndex(COL_SHOW_AZIMUTH)
+
+                while (cursor.moveToNext()) {
+                    list.add(
+                        PhotoMediaMetadata(
+                            uri = cursor.getString(cursor.getColumnIndexOrThrow(COL_URI)),
+                            latitude = if (cursor.isNull(latitudeIndex)) null else cursor.getDouble(latitudeIndex),
+                            longitude = if (cursor.isNull(longitudeIndex)) null else cursor.getDouble(longitudeIndex),
+                            capturedAt = cursor.getLong(cursor.getColumnIndexOrThrow(COL_CAPTURED_AT)),
+                            address = cursor.getString(cursor.getColumnIndexOrThrow(COL_ADDRESS)),
+                            userName = cursor.getString(cursor.getColumnIndexOrThrow(COL_USER_NAME)),
+                            showUtm = cursor.getInt(cursor.getColumnIndexOrThrow(COL_SHOW_UTM)) == 1,
+                            showGeo = cursor.getInt(cursor.getColumnIndexOrThrow(COL_SHOW_GEO)) == 1,
+                            showDateTime = cursor.getInt(cursor.getColumnIndexOrThrow(COL_SHOW_DATETIME)) == 1,
+                            showAddress = cursor.getInt(cursor.getColumnIndexOrThrow(COL_SHOW_ADDRESS)) == 1,
+                            showName = cursor.getInt(cursor.getColumnIndexOrThrow(COL_SHOW_NAME)) == 1,
+                            altitude = if (altitudeIndex >= 0 && !cursor.isNull(altitudeIndex)) cursor.getDouble(altitudeIndex) else null,
+                            accuracy = if (accuracyIndex >= 0 && !cursor.isNull(accuracyIndex)) cursor.getFloat(accuracyIndex) else null,
+                            azimuth = if (azimuthIndex >= 0 && !cursor.isNull(azimuthIndex)) cursor.getFloat(azimuthIndex) else null,
+                            showAltitude = if (showAltIndex >= 0) cursor.getInt(showAltIndex) == 1 else true,
+                            showAzimuth = if (showAzIndex >= 0) cursor.getInt(showAzIndex) == 1 else true,
+                        )
+                    )
+                }
+            }
+        }
+        return list
+    }
+
     fun delete(uris: Collection<Uri>) {
         if (uris.isEmpty()) return
         writableDatabase.beginTransaction()

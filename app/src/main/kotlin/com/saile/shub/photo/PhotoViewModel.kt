@@ -108,4 +108,18 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun toggleShutterSound(play: Boolean) = updateState { it.copy(playShutterSound = play) }
     fun setLogo(logo: String?) = updateState { it.copy(selectedLogo = logo) }
+
+    fun prepareForGisAssetCapture(assetLabel: String) {
+        updateState {
+            it.copy(
+                userName = assetLabel,
+                showName = true,
+                showUtm = true,
+                showGeo = true,
+                showDateTime = true,
+                status = "Vinculado ao sGis: $assetLabel"
+            )
+        }
+        savePreferences()
+    }
 }

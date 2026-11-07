@@ -1,29 +1,32 @@
 package com.saile.shub.gis
 
 import android.app.Application
-import android.content.Context
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
+import com.saile.shub.core.geo.UtmConverter
 import com.saile.shub.gis.data.AppDatabase
 import com.saile.shub.gis.data.entities.GisFeatureEntity
 import com.saile.shub.gis.domain.BoundingBox
+import com.saile.shub.gis.domain.ClientsPackageMetadata
+import com.saile.shub.gis.domain.GisClientRecord
+import com.saile.shub.gis.domain.GisClientsHelper
 import com.saile.shub.gis.domain.GisElementType
 import com.saile.shub.gis.domain.GisLayerSummary
 import com.saile.shub.gis.domain.GisRenderElement
-import com.saile.shub.gis.domain.GpkgReader
 import com.saile.shub.gis.domain.GpkgReaderProvider
 import com.saile.shub.gis.usecase.GisSearchResult
 import com.saile.shub.gis.usecase.ImportGpkgUseCase
 import com.saile.shub.gis.usecase.ImportProgress
 import com.saile.shub.gis.usecase.SearchFeatureUseCase
 import com.saile.shub.gis.usecase.SearchItem
+import com.saile.shub.photo.data.PhotoMediaMetadata
+import com.saile.shub.photo.data.PhotoMediaMetadataDbHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,7 +35,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 
 sealed class GisState {
@@ -48,7 +53,8 @@ data class MapTarget(
     val title: String,
     val subtitle: String?,
     val zoomLevel: Double = 18.0,
-    val feature: GisFeatureEntity? = null
+    val feature: GisFeatureEntity? = null,
+    val client: GisClientRecord? = null
 )
 
 enum class GpsTrackingMode {
@@ -72,18 +78,18 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
 
     private val importUseCase = ImportGpkgUseCase(application, db.gisDao())
     private val searchUseCase = SearchFeatureUseCase(db.gisDao())
+    private val photoDbHelper = PhotoMediaMetadataDbHelper(application)
+    private val inspectionHelper = GisFieldInspectionHelper(application)
 
     private val _state = MutableStateFlow<GisState>(GisState.Idle)
     val state: StateFlow<GisState> = _state.asStateFlow()
 
-    // Default to Google Hybrid for high-contrast engineering satellite view with roads
     private val _networkMode = MutableStateFlow(GisNetworkMode.OFFLINE_ONLY)
     val networkMode: StateFlow<GisNetworkMode> = _networkMode.asStateFlow()
 
     private val _currentBasemap = MutableStateFlow(BasemapType.OFFLINE_MBTILES)
     val currentBasemap: StateFlow<BasemapType> = _currentBasemap.asStateFlow()
 
-    // QField Interaction Mode: BROWSE vs DIGITIZE
     private val _interactionMode = MutableStateFlow(GisInteractionMode.BROWSE)
     val interactionMode: StateFlow<GisInteractionMode> = _interactionMode.asStateFlow()
 
@@ -138,6 +144,46 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
     private val _offlineMbtilesPath = MutableStateFlow<String?>(null)
     val offlineMbtilesPath: StateFlow<String?> = _offlineMbtilesPath.asStateFlow()
 
+    // Base de Clientes (.json -> SQLite indexado)
+    private val _activeClientsMetadata = MutableStateFlow<ClientsPackageMetadata?>(null)
+    val activeClientsMetadata: StateFlow<ClientsPackageMetadata?> = _activeClientsMetadata.asStateFlow()
+
+    private val _isImportingClients = MutableStateFlow(false)
+    val isImportingClients: StateFlow<Boolean> = _isImportingClients.asStateFlow()
+
+    private val _clientsImportCount = MutableStateFlow(0)
+    val clientsImportCount: StateFlow<Int> = _clientsImportCount.asStateFlow()
+
+    // Camada de Fotos Georreferenciadas (sFoto -> sGis) e Inspeções de Campo
+    private val _geotaggedPhotos = MutableStateFlow<List<PhotoMediaMetadata>>(emptyList())
+    val geotaggedPhotos: StateFlow<List<PhotoMediaMetadata>> = _geotaggedPhotos.asStateFlow()
+
+    private val _fieldInspections = MutableStateFlow<List<FieldInspectionRecord>>(emptyList())
+    val fieldInspections: StateFlow<List<FieldInspectionRecord>> = _fieldInspections.asStateFlow()
+
+    // Linha Guia Rural ("Fora de Estrada")
+    private val _isRuralGuidanceActive = MutableStateFlow(false)
+    val isRuralGuidanceActive: StateFlow<Boolean> = _isRuralGuidanceActive.asStateFlow()
+
+    // Atualizador de Cache Satélite Guiado pelo .gpkg
+    private val _isSyncingSatelliteCache = MutableStateFlow(false)
+    val isSyncingSatelliteCache: StateFlow<Boolean> = _isSyncingSatelliteCache.asStateFlow()
+
+    private val _satelliteSyncProgressText = MutableStateFlow<String?>(null)
+    val satelliteSyncProgressText: StateFlow<String?> = _satelliteSyncProgressText.asStateFlow()
+
+    // Preservação do Estado da Câmera do Mapa entre Módulos (sGis ⇄ sFoto)
+    private val _savedCenterLat = MutableStateFlow(-10.828)
+    val savedCenterLat: StateFlow<Double> = _savedCenterLat.asStateFlow()
+
+    private val _savedCenterLon = MutableStateFlow(-63.284)
+    val savedCenterLon: StateFlow<Double> = _savedCenterLon.asStateFlow()
+
+    private val _savedZoomLevel = MutableStateFlow(8.5)
+    val savedZoomLevel: StateFlow<Double> = _savedZoomLevel.asStateFlow()
+
+    var hasInitialAutoZoomed: Boolean = false
+
     // Precision Reticle
     private val _isReticleVisible = MutableStateFlow(true)
     val isReticleVisible: StateFlow<Boolean> = _isReticleVisible.asStateFlow()
@@ -171,6 +217,136 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             loadActiveDataset(autoZoom = true)
             refreshAvailableMbtiles()
+            refreshClientsMetadata()
+            refreshPhotosAndInspections()
+        }
+    }
+
+    fun saveCameraPosition(lat: Double, lon: Double, zoom: Double) {
+        _savedCenterLat.value = lat
+        _savedCenterLon.value = lon
+        _savedZoomLevel.value = zoom
+    }
+
+    fun refreshPhotosAndInspections() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _geotaggedPhotos.value = photoDbHelper.getAllGeotaggedPhotos()
+            _fieldInspections.value = inspectionHelper.getAllInspections()
+        }
+    }
+
+    fun refreshClientsMetadata() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val ctx = getApplication<Application>()
+            var meta = GisClientsHelper.readActiveMetadata(ctx)
+            if (meta == null) {
+                // Check if dashboard_rota.json is in /sdcard/Download or externalFilesDir
+                val candidates = listOfNotNull(
+                    ctx.getExternalFilesDir(null)?.let { File(it, "clients/dashboard_rota.json") },
+                    File("/sdcard/Download/dashboard_rota.json")
+                )
+                val foundJson = candidates.firstOrNull { it.exists() && it.length() > 1024L }
+                if (foundJson != null) {
+                    _isImportingClients.value = true
+                    _clientsImportCount.value = 0
+                    meta = GisClientsHelper.importClientsFromFile(ctx, foundJson) { count ->
+                        _clientsImportCount.value = count
+                    }
+                    _isImportingClients.value = false
+                }
+            }
+            _activeClientsMetadata.value = meta
+        }
+    }
+
+    fun importClientsUri(uri: Uri, onResult: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            _isImportingClients.value = true
+            _clientsImportCount.value = 0
+            val meta = GisClientsHelper.importClientsFromUri(
+                context = getApplication(),
+                uri = uri,
+                onProgress = { count ->
+                    _clientsImportCount.value = count
+                }
+            )
+            _isImportingClients.value = false
+            if (meta != null) {
+                _activeClientsMetadata.value = meta
+                onResult(true)
+            } else {
+                onResult(false)
+            }
+        }
+    }
+
+    fun toggleRuralGuidance() {
+        _isRuralGuidanceActive.value = !_isRuralGuidanceActive.value
+    }
+
+    fun addFieldInspection(
+        targetCode: String,
+        targetLayer: String,
+        anomalyType: String,
+        severity: String,
+        notes: String,
+        latitude: Double,
+        longitude: Double,
+        photoUri: String? = null
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val utmText = UtmConverter.formatUtm(latitude, longitude)
+            val rec = FieldInspectionRecord(
+                targetCode = targetCode,
+                targetLayer = targetLayer,
+                anomalyType = anomalyType,
+                severity = severity,
+                notes = notes,
+                latitude = latitude,
+                longitude = longitude,
+                utmText = utmText,
+                photoUri = photoUri
+            )
+            inspectionHelper.insertInspection(rec)
+            _fieldInspections.value = inspectionHelper.getAllInspections()
+        }
+    }
+
+    fun deleteFieldInspection(id: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            inspectionHelper.deleteInspection(id)
+            _fieldInspections.value = inspectionHelper.getAllInspections()
+        }
+    }
+
+    fun syncGpkgAreaSatelliteCache(centerLat: Double, centerLon: Double, onComplete: (Int) -> Unit = {}) {
+        if (_isSyncingSatelliteCache.value) return
+        viewModelScope.launch {
+            val gpkg = getActiveGpkgFile()
+            val mbtiles = _activeMbtilesMetadata.value?.file ?: _availableMbtiles.value.firstOrNull()?.file
+            if (gpkg == null || mbtiles == null) {
+                onComplete(0)
+                return@launch
+            }
+            _isSyncingSatelliteCache.value = true
+            _satelliteSyncProgressText.value = "Analisando área do GPKG..."
+            val downloaded = OfflinePackageManager.syncGpkgAreaTilesToMbtiles(
+                gpkgFile = gpkg,
+                mbtilesFile = mbtiles,
+                centerLat = centerLat,
+                centerLon = centerLon,
+                onProgress = { done, total ->
+                    _satelliteSyncProgressText.value = if (total > 0) {
+                        "Sincronizando cache satélite HD: $done / $total tiles"
+                    } else {
+                        "Área atual já está 100% em cache offline!"
+                    }
+                }
+            )
+            _isSyncingSatelliteCache.value = false
+            _satelliteSyncProgressText.value = null
+            refreshAvailableMbtiles()
+            onComplete(downloaded)
         }
     }
 
@@ -195,17 +371,16 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                 _activeGpkgName.value = file.name
                 val mb = file.length() / (1024.0 * 1024.0)
                 _activeGpkgSizeFormatted.value = if (mb >= 1024.0) {
-                    String.format(java.util.Locale.US, "%.2f GB", mb / 1024.0)
+                    String.format(Locale.US, "%.2f GB", mb / 1024.0)
                 } else {
-                    String.format(java.util.Locale.US, "%.1f MB", mb)
+                    String.format(Locale.US, "%.1f MB", mb)
                 }
                 _activeGpkgImportDate.value = runCatching {
-                    val sdf = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault())
+                    val sdf = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
                     sdf.format(java.util.Date(file.lastModified()))
                 }.getOrDefault("--/--/----")
                 _activeGpkgSrs.value = reader.getDatasetSrsDescription()
 
-                // Ensure high-performance SQLite search indexes exist in the background (sub-1ms lookup like QField)
                 viewModelScope.launch(Dispatchers.IO) {
                     runCatching {
                         val count = reader.createSearchIndexes()
@@ -234,7 +409,8 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                     _activeEditLayer.value = layers.firstOrNull { it.type == GisElementType.POLE }?.name ?: layers.first().name
                 }
 
-                if (autoZoom && extent != null) {
+                if (autoZoom && !hasInitialAutoZoomed && extent != null) {
+                    hasInitialAutoZoomed = true
                     _zoomToExtentEvent.tryEmit(extent)
                 }
 
@@ -256,10 +432,8 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         val files = gpkgDir.listFiles { f -> f.extension.equals("gpkg", ignoreCase = true) }
         val file = files?.maxByOrNull { it.length() }
         if (file != null && file.exists()) {
-            Log.i("ShubGis", "Active GPKG: ${file.absolutePath} (${file.length()} bytes)")
             return file
         }
-        Log.w("ShubGis", "Active GPKG: no .gpkg found in ${gpkgDir.absolutePath}")
         return null
     }
 
@@ -422,7 +596,7 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         val currentGen = queryGeneration.incrementAndGet()
         viewportJob = viewModelScope.launch(queryDispatcher) {
             if (!isFirst) {
-                delay(100)
+                delay(80)
             }
             queryViewport(minLat, maxLat, minLon, maxLon, zoom, currentGen)
         }
@@ -439,15 +613,11 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         if (generation != queryGeneration.get()) return
         val file = getActiveGpkgFile()
         if (file == null) {
-            Log.w("ShubGis", "queryViewport: active GPKG file is null")
-            _state.value = GisState.Error("Nenhum arquivo GeoPackage ativo encontrado.")
             _visibleElements.value = emptyList()
             return
         }
         val reader = GpkgReaderProvider.getOrOpen(file.absolutePath)
         if (reader == null) {
-            Log.w("ShubGis", "queryViewport: could not open reader for ${file.absolutePath}")
-            _state.value = GisState.Error("Não foi possível abrir o GeoPackage: ${file.name}")
             _visibleElements.value = emptyList()
             return
         }
@@ -463,13 +633,7 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
             shouldContinue = { generation == queryGeneration.get() }
         )
 
-        if (generation != queryGeneration.get()) {
-            Log.i("ShubGis", "queryViewport: generation $generation discarded (current: ${queryGeneration.get()})")
-            return
-        }
-
-        val count = elements.size
-        Log.i("ShubGis", "queryViewport [gen=$generation]: bounds=[$minLat, $minLon to $maxLat, $maxLon], zoom=$zoom -> found $count elements")
+        if (generation != queryGeneration.get()) return
         _visibleElements.value = elements
     }
 
@@ -506,6 +670,16 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun focusCoordinateTarget(latitude: Double, longitude: Double, title: String, subtitle: String?) {
+        _selectedTarget.value = MapTarget(
+            latitude = latitude,
+            longitude = longitude,
+            title = title,
+            subtitle = subtitle,
+            zoomLevel = 18.0
+        )
+    }
+
     fun importGpkg(uri: Uri, displayName: String) {
         viewModelScope.launch {
             try {
@@ -515,6 +689,7 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                         _state.value = GisState.Idle
                         GpkgReaderProvider.closeAll()
                         layersInitialized = false
+                        hasInitialAutoZoomed = false
                         loadActiveDataset(autoZoom = true)
                     }
                 }
@@ -534,8 +709,15 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
             delay(80)
             try {
                 val gpkgPath = getActiveGpkgFile()?.absolutePath
-                val results = searchUseCase.execute(query, gpkgPath = gpkgPath)
-                Log.i("ShubGisSearch", "Search '$query' -> coordMatch=${results.coordinateMatch != null}, features=${results.features.size}")
+                val results = searchUseCase.execute(
+                    query = query,
+                    gpkgPath = gpkgPath,
+                    context = getApplication()
+                )
+                Log.i(
+                    "ShubGisSearch",
+                    "Search '$query' -> coordMatch=${results.coordinateMatch != null}, features=${results.features.size}, clients=${results.clients.size}"
+                )
                 _state.value = GisState.SearchResults(results)
             } catch (e: Exception) {
                 Log.e("ShubGisSearch", "Search error: ${e.message}", e)
@@ -569,14 +751,44 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
+            is SearchItem.ClientItem -> {
+                val c = item.client
+                val lat = c.latitude ?: _savedCenterLat.value
+                val lon = c.longitude ?: _savedCenterLon.value
+                val syntheticEntity = GisFeatureEntity(
+                    id = -c.id.coerceAtLeast(1L),
+                    packageId = 0L,
+                    sourceLayer = "Cliente / Unidade Consumidora",
+                    featureSourceId = c.cdc,
+                    codeRaw = "UC ${c.cdc} • ${c.cliente}",
+                    codeNorm = c.cdc.lowercase(),
+                    geometryType = "Point",
+                    centroidLat = lat,
+                    centroidLon = lon,
+                    minLat = lat,
+                    minLon = lon,
+                    maxLat = lat,
+                    maxLon = lon,
+                    metadataJson = c.toMetadataJson()
+                )
+                _selectedTarget.value = MapTarget(
+                    latitude = lat,
+                    longitude = lon,
+                    title = "UC: ${c.cdc.ifBlank { "-" }} • Med: ${c.medidor.ifBlank { "-" }}",
+                    subtitle = "${c.cliente} (Livro ${c.livro} / Rota ${c.rota} / Conta ${c.conta})",
+                    zoomLevel = 18.5,
+                    feature = syntheticEntity,
+                    client = c
+                )
+            }
         }
     }
 
     fun clearSelection() {
         _selectedTarget.value = null
+        _isRuralGuidanceActive.value = false
     }
 
-    // --- Digitizing / Editing Methods ---
     fun addPointFeature(
         layerName: String,
         latitude: Double,
@@ -592,9 +804,9 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
             val cols = reader.getLayerColumns(layerName)
             val codeCol = cols.firstOrNull {
                 it.contains("codigo", ignoreCase = true) ||
-                it.contains("operativo", ignoreCase = true) ||
-                it.contains("name", ignoreCase = true) ||
-                it.contains("nome", ignoreCase = true)
+                    it.contains("operativo", ignoreCase = true) ||
+                    it.contains("name", ignoreCase = true) ||
+                    it.contains("nome", ignoreCase = true)
             } ?: "codigo"
 
             val attrs = mutableMapOf<String, Any?>()
@@ -646,6 +858,8 @@ class GisViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        runCatching { photoDbHelper.close() }
+        runCatching { inspectionHelper.close() }
         GpkgReaderProvider.closeAll()
     }
 }

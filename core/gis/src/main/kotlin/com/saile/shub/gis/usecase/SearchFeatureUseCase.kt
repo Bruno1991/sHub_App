@@ -1,13 +1,15 @@
 package com.saile.shub.gis.usecase
 
+import android.content.Context
 import com.saile.shub.gis.data.dao.GisDao
 import com.saile.shub.gis.data.entities.GisFeatureEntity
 import com.saile.shub.gis.domain.CoordinateSearchParser
+import com.saile.shub.gis.domain.GisClientRecord
+import com.saile.shub.gis.domain.GisClientsHelper
 import com.saile.shub.gis.domain.GpkgReader
 import com.saile.shub.gis.domain.GpkgReaderProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.text.Normalizer
 import java.util.Locale
 
@@ -27,12 +29,21 @@ sealed class SearchItem {
         val latitude: Double?,
         val longitude: Double?
     ) : SearchItem()
+
+    data class ClientItem(
+        val client: GisClientRecord,
+        val title: String,
+        val subtitle: String,
+        val latitude: Double?,
+        val longitude: Double?
+    ) : SearchItem()
 }
 
 data class GisSearchResult(
     val query: String,
     val coordinateMatch: SearchItem.CoordinateItem?,
-    val features: List<SearchItem.FeatureItem>
+    val features: List<SearchItem.FeatureItem>,
+    val clients: List<SearchItem.ClientItem> = emptyList()
 )
 
 class SearchFeatureUseCase(private val gisDao: GisDao) {
@@ -50,15 +61,16 @@ class SearchFeatureUseCase(private val gisDao: GisDao) {
     suspend fun execute(
         query: String,
         gpkgPath: String? = null,
+        context: Context? = null,
         limit: Int = 100,
         offset: Int = 0
     ): GisSearchResult = withContext(Dispatchers.IO) {
         val trimmed = query.trim()
         if (trimmed.isBlank()) {
-            return@withContext GisSearchResult(query, null, emptyList())
+            return@withContext GisSearchResult(query, null, emptyList(), emptyList())
         }
 
-        // 1. Check for coordinate pattern (Geographic Lat/Lon or UTM Zone 20S/etc)
+        // 1. Check for coordinate pattern (Geographic Lat/Lon, DMS, or UTM Zone 20S/21S/etc.)
         val coord = CoordinateSearchParser.parse(trimmed)
         val coordItem = coord?.let {
             SearchItem.CoordinateItem(
@@ -116,10 +128,33 @@ class SearchFeatureUseCase(private val gisDao: GisDao) {
             }
         }
 
+        // 4. Search Clients database (UC/CDC, Medidor, Nome do Cliente or nearby coordinates)
+        val clientsList = if (context != null) {
+            val rawClients = if (coord != null) {
+                GisClientsHelper.findNearbyClients(
+                    context = context,
+                    targetLat = coord.latitude,
+                    targetLon = coord.longitude,
+                    radiusMeters = 500.0,
+                    limit = 20
+                )
+            } else {
+                GisClientsHelper.searchClients(
+                    context = context,
+                    query = trimmed,
+                    limit = 40
+                )
+            }
+            rawClients.map { toClientItem(it) }
+        } else {
+            emptyList()
+        }
+
         GisSearchResult(
             query = query,
             coordinateMatch = coordItem,
-            features = featuresList
+            features = featuresList,
+            clients = clientsList
         )
     }
 
@@ -136,6 +171,29 @@ class SearchFeatureUseCase(private val gisDao: GisDao) {
             subtitle = subtitle,
             latitude = entity.centroidLat,
             longitude = entity.centroidLon
+        )
+    }
+
+    private fun toClientItem(client: GisClientRecord): SearchItem.ClientItem {
+        val ucPart = if (client.cdc.isNotBlank()) "UC: ${client.cdc}" else "Sem UC"
+        val medPart = if (client.medidor.isNotBlank()) " • Med: ${client.medidor}" else ""
+        val title = "${client.cliente.ifBlank { "Cliente" }} ($ucPart$medPart)"
+        val rotaInfo = listOfNotNull(
+            client.livro.takeIf { it.isNotBlank() }?.let { "Liv: $it" },
+            client.rota.takeIf { it.isNotBlank() }?.let { "Rota: $it" },
+            client.conta.takeIf { it.isNotBlank() }?.let { "Cta: $it" }
+        ).joinToString(" | ")
+        val coordStr = if (client.latitude != null && client.longitude != null) {
+            " • %.5f, %.5f".format(Locale.US, client.latitude, client.longitude)
+        } else " • Sem coordenada GPS"
+        val subtitle = listOf(rotaInfo, coordStr.removePrefix(" • ")).filter { it.isNotBlank() }.joinToString(" • ")
+
+        return SearchItem.ClientItem(
+            client = client,
+            title = title,
+            subtitle = subtitle,
+            latitude = client.latitude,
+            longitude = client.longitude
         )
     }
 

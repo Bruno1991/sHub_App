@@ -58,6 +58,28 @@ class GisLocationTracker(private val context: Context) : LocationListener, Senso
     private val _compassHeading = MutableStateFlow(0f)
     val compassHeading: StateFlow<Float> = _compassHeading.asStateFlow()
 
+    private val _isRecordingTracklog = MutableStateFlow(false)
+    val isRecordingTracklog: StateFlow<Boolean> = _isRecordingTracklog.asStateFlow()
+
+    private val _tracklogPoints = MutableStateFlow<List<Pair<Double, Double>>>(emptyList())
+    val tracklogPoints: StateFlow<List<Pair<Double, Double>>> = _tracklogPoints.asStateFlow()
+
+    fun toggleTracklog() {
+        val next = !_isRecordingTracklog.value
+        _isRecordingTracklog.value = next
+        if (next) {
+            _positioningInfo.value?.let { pos ->
+                if (_tracklogPoints.value.isEmpty()) {
+                    _tracklogPoints.value = listOf(pos.latitude to pos.longitude)
+                }
+            }
+        }
+    }
+
+    fun clearTracklog() {
+        _tracklogPoints.value = emptyList()
+    }
+
     private var isTracking = false
     private var isCompassActive = false
 
@@ -174,6 +196,19 @@ class GisLocationTracker(private val context: Context) : LocationListener, Senso
                 loc.isFromMockProvider
             }
         )
+
+        if (_isRecordingTracklog.value) {
+            val currentList = _tracklogPoints.value
+            val last = currentList.lastOrNull()
+            val shouldAdd = if (last == null) {
+                true
+            } else {
+                GisNavigationHelper.calculateDistanceMeters(last.first, last.second, loc.latitude, loc.longitude) >= 5.0
+            }
+            if (shouldAdd) {
+                _tracklogPoints.value = (currentList + (loc.latitude to loc.longitude)).takeLast(2000)
+            }
+        }
     }
 
     override fun onSensorChanged(event: SensorEvent) {
